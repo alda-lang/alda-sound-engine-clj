@@ -5,7 +5,8 @@
                     [alda/core           "0.0.1"  :scope "test"]
 
                     ; dependencies
-                    [com.taoensso/timbre "4.1.1"]])
+                    [com.taoensso/timbre "4.1.1"]
+                    [org.clojars.sidec/jsyn "16.7.3"]])
 
 (require '[adzerk.bootlaces :refer :all])
 
