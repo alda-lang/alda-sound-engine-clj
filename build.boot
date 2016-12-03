@@ -2,10 +2,10 @@
   :source-paths   #{"src"}
   :dependencies   '[; dev
                     [adzerk/bootlaces    "0.1.13" :scope "test"]
-                    [alda/core           "0.1.0"  :scope "test"]
+                    [alda/core           "0.1.1"  :scope "test"]
 
                     ; dependencies
-                    [com.taoensso/timbre "4.1.1"]
+                    [com.taoensso/timbre "4.7.4"]
                     [org.clojars.sidec/jsyn "16.7.3"]])
 
 (require '[adzerk.bootlaces :refer :all])
