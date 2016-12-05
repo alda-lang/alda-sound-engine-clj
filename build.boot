@@ -2,7 +2,7 @@
   :source-paths   #{"src"}
   :dependencies   '[; dev
                     [adzerk/bootlaces    "0.1.13" :scope "test"]
-                    [alda/core           "0.1.1"  :scope "test"]
+                    [alda/core           "0.1.2"  :scope "test"]
 
                     ; dependencies
                     [com.taoensso/timbre "4.7.4"]
