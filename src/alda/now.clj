@@ -60,6 +60,21 @@
        ~@body
        score#)))
 
+(defn play-with-opts!
+  "Like `play!`, but takes a map of playback options to override the default
+   options as the first argument."
+  [opts & body]
+  (sound/with-play-opts opts
+    (let [score-before (if *current-score*
+                         @*current-score*
+                         @(new-score))
+          score-after  (apply lisp/continue score-before body)
+          new-events   (set/difference (:events score-after)
+                                       (:events score-before))]
+      (sound/play! score-after new-events)
+      (when *current-score*
+        (reset! *current-score* score-after)))))
+
 (defn play!
   "Evaluates some alda.lisp code and plays only the new events.
 
@@ -73,18 +88,10 @@
    Both `with-score` and `with-new-score` return the score that is being
    appended."
   [& body]
-  (sound/with-play-opts {:async?   true
-                         :one-off? (or (:one-off? *play-opts*)
-                                       (not *current-score*))}
-    (let [score-before (if *current-score*
-                         @*current-score*
-                         @(new-score))
-          score-after  (apply lisp/continue score-before body)
-          new-events   (set/difference (:events score-after)
-                                       (:events score-before))]
-      (sound/play! score-after new-events)
-      (when *current-score*
-        (reset! *current-score* score-after)))))
+  (let [default-opts {:async?   true
+                      :one-off? (or (:one-off? *play-opts*)
+                                    (not *current-score*))}]
+    (apply play-with-opts! default-opts body)))
 
 (defn play-score!
   "Plays an entire Alda score.
