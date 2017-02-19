@@ -194,6 +194,12 @@
 (defn start-finish-times [{:keys [from to]} markers]
   (map (partial lookup-time markers) [from to]))
 
+(defn earliest-offset
+  [event-set]
+  (->> (map :offset event-set)
+       (apply min Long/MAX_VALUE)
+       (max 0)))
+
 (defn shift-events
   [events offset cut-off]
   (let [offset  (or offset 0)
@@ -261,16 +267,12 @@
         playing?    (atom true)
         wait        (promise)
         _           (log/debug "Determining events to schedule...")
-        events      (if event-set
-                      (let [earliest (->> (map :offset event-set)
-                                          (apply min Long/MAX_VALUE)
-                                          (max 0))]
-                        (shift-events event-set earliest nil))
-                      (let [event-set   (:events score)
-                            markers     (:markers score)
-                            [start end] (start-finish-times *play-opts*
-                                                            markers)]
-                        (shift-events event-set start end)))
+        [start end] (start-finish-times *play-opts* (:markers score))
+        start'      (if event-set
+                      (earliest-offset event-set)
+                      start)
+        events      (-> (or event-set (:events score))
+                        (shift-events start' end))
         clean-up    #(tear-down! audio-ctx audio-types score)]
     (log/debug "Scheduling events...")
     (schedule-events! events score audio-ctx playing? wait)
