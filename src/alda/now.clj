@@ -39,6 +39,14 @@
 
 (def ^:dynamic *current-score* nil)
 
+(defmacro with-score*
+  "Like `with-score`, but doesn't return the score at the end.
+
+   Useful for when you need the return value of `body`."
+  [score & body]
+  `(binding [*current-score* ~score]
+     ~@body))
+
 (defmacro with-score
   "When `play!` is used within this scope, appends to `score` and plays any new
    notes.
@@ -70,10 +78,11 @@
                          @(new-score))
           score-after  (apply lisp/continue score-before body)
           new-events   (set/difference (:events score-after)
-                                       (:events score-before))]
-      (sound/play! score-after new-events)
+                                       (:events score-before))
+          result       (sound/play! score-after new-events)]
       (when *current-score*
-        (reset! *current-score* score-after)))))
+        (reset! *current-score* score-after))
+      result)))
 
 (defn play!
   "Evaluates some alda.lisp code and plays only the new events.

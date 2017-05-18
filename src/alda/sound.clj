@@ -223,8 +223,7 @@
   (let [{:keys [instruments]} score
         engine (:synthesis-engine @audio-ctx)
         begin  (.getCurrentTime ^SynthesisEngine engine)
-        ; bug? this could cause infinite blocking if @playing? is false
-        end!   #(when @playing? (deliver wait :done))]
+        end!   #(deliver wait :done)]
     (pdoseq-block [{:keys [offset instrument duration] :as event} events]
       (let [inst   (-> instrument instruments)
             start! #(when @playing?
@@ -254,8 +253,16 @@
    that the earliest event's offset is 0 -- this is so that playback will start
    immediately.
 
-   Returns a function that, when called mid-playback, will stop any further
-   events from playing."
+   Returns a result map containing the following values:
+
+     :score    The full score being played.
+
+     :stop!    A function that, when called mid-playback, will stop any further
+               events from playing.
+
+     :wait     A function that will sleep for the duration of the score. This is
+               useful if you want to playback asynchronously, perform some
+               actions, then wait until playback is complete before proceeding."
   [score & [event-set]]
   (let [{:keys [one-off? async?]} *play-opts*
         _           (log/debug "Determining audio types...")
@@ -280,5 +287,7 @@
       (and one-off? async?)       (future @wait (clean-up))
       (and one-off? (not async?)) (do @wait (clean-up))
       (not async?)                @wait)
-    #(reset! playing? false)))
+    {:score score
+     :stop! #(reset! playing? false)
+     :wait  #(deref wait)}))
 
