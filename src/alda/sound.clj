@@ -24,90 +24,94 @@
      :synthesis-engine (or *synthesis-engine* (new-synthesis-engine))}))
 
 (defn set-up?
-  [audio-ctx audio-type]
-  (contains? (:audio-types @audio-ctx) audio-type))
+  [{:keys [audio-context] :as score} audio-type]
+  (contains? (:audio-types @audio-context) audio-type))
 
 (defmulti set-up-audio-type!
-  (fn [audio-ctx audio-type & [score]] audio-type))
+  (fn [score audio-type] audio-type))
 
 (defmethod set-up-audio-type! :default
-  [_ audio-type & [score]]
+  [score audio-type]
   (log/errorf "No implementation of set-up-audio-type! defined for type %s"
               audio-type))
 
 (defmethod set-up-audio-type! :midi
-  [audio-ctx _ & [score]]
+  [{:keys [audio-context] :as score} _]
   (log/debug "Setting up MIDI...")
-  (midi/get-midi-synth! audio-ctx))
+  (midi/get-midi-synth! audio-context))
 
 (declare determine-audio-types)
 
 (defn set-up!
   "Does any necessary setup for one or more audio types.
    e.g. for MIDI, create and open a MIDI synth."
-  ([{:keys [audio-context] :as score}]
-   (let [audio-types (determine-audio-types score)]
-     (set-up! audio-context audio-types score)))
-  ([audio-ctx audio-type & [score]]
+  ([score]
+   (set-up! score (determine-audio-types score)))
+  ([{:keys [audio-context] :as score} audio-type]
    (if (coll? audio-type)
      (pdoseq-block [a-t audio-type]
-                   (set-up! audio-ctx a-t score))
-     (when-not (set-up? audio-ctx audio-type)
-       (set-up-audio-type! audio-ctx audio-type score)
-       (swap! audio-ctx update :audio-types conj audio-type)))))
+       (set-up! score a-t))
+     (when-not (set-up? score audio-type)
+       (swap! audio-context update :audio-types conj audio-type)
+       (set-up-audio-type! score audio-type)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defmulti refresh-audio-type!
-  (fn [audio-ctx audio-type & [score]] audio-type))
+  (fn [score audio-type] audio-type))
 
 (defmethod refresh-audio-type! :default
-  [_ audio-type & [score]]
+  [score audio-type]
   (log/errorf "No implementation of refresh-audio-type! defined for type %s"
               audio-type))
 
 (defmethod refresh-audio-type! :midi
-  [audio-ctx _ & [score]]
-  (midi/load-instruments! audio-ctx score))
+  [{:keys [audio-context] :as score} _]
+  (midi/load-instruments! audio-context score))
 
 (defn refresh!
   "Performs any actions that may be needed each time the `play!` function is
    called. e.g. for MIDI, load instruments into channels (this needs to be
    done every time `play!` is called because new instruments may have been
    added to the score between calls to `play!`, when using Alda live.)"
-  [audio-ctx audio-type & [score]]
-  (if (coll? audio-type)
-    (pdoseq-block [a-t audio-type]
-      (refresh! audio-ctx a-t score))
-    (when (set-up? audio-ctx audio-type)
-      (refresh-audio-type! audio-ctx audio-type score))))
+  ([score]
+    (pdoseq-block [audio-type (determine-audio-types score)]
+      (refresh! score audio-type)))
+  ([score audio-type]
+   (if (coll? audio-type)
+     (pdoseq-block [a-t audio-type]
+       (refresh! score a-t))
+     (when (set-up? score audio-type)
+       (refresh-audio-type! score audio-type)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defmulti tear-down-audio-type!
-  (fn [audio-ctx audio-type & [score]] audio-type))
+  (fn [score audio-type] audio-type))
 
 (defmethod tear-down-audio-type! :default
-  [_ audio-type & [score]]
+  [score audio-type]
   (log/errorf "No implementation of tear-down! defined for type %s" audio-type))
 
 (defmethod tear-down-audio-type! :midi
-  [audio-ctx _ & [score]]
-  (midi/close-midi-synth! audio-ctx))
+  [{:keys [audio-context] :as score} _]
+  (midi/close-midi-synth! audio-context))
 
 (defn tear-down!
-  "Does any necessary clean-up at the end.
-   e.g. for MIDI, close the MIDI synth."
   ([{:keys [audio-context] :as score}]
-   (let [audio-types (determine-audio-types score)]
-     (tear-down! audio-context audio-types score)))
-  ([audio-ctx audio-type & [score]]
+   ;; Prevent any future events from being executed. This is so that playback
+   ;; will stop when we tear down the score mid-playback.
+   (.clearCommandQueue (:synthesis-engine @audio-context))
+   ;; Do any necessary clean-up for each audio type.
+   ;; e.g. for MIDI, close the MidiSynthesizer.
+   (tear-down! score (determine-audio-types score)))
+  ([{:keys [audio-context] :as score} audio-type]
    (if (coll? audio-type)
      (pdoseq-block [a-t audio-type]
-                   (tear-down! audio-ctx a-t score))
-     (when (set-up? audio-ctx audio-type)
-       (tear-down-audio-type! audio-ctx audio-type score)
-       (swap! audio-ctx update :audio-types disj audio-type)))))
+       (tear-down! score a-t))
+     (when (set-up? score audio-type)
+       (swap! audio-context update :audio-types disj audio-type)
+       (tear-down-audio-type! score audio-type)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -219,9 +223,9 @@
     (.scheduleCommand engine ts cmd)))
 
 (defn schedule-events!
-  [events score audio-ctx playing? wait]
-  (let [{:keys [instruments]} score
-        engine (:synthesis-engine @audio-ctx)
+  [events score playing? wait]
+  (let [{:keys [instruments audio-context]} score
+        engine (:synthesis-engine @audio-context)
         begin  (.getCurrentTime ^SynthesisEngine engine)
         end!   #(deliver wait :done)]
     (pdoseq-block [{:keys [offset instrument duration] :as event} events]
@@ -229,9 +233,9 @@
             start! #(when @playing?
                       (if-let [f (:function event)]
                         (future (f))
-                        (start-event! audio-ctx event inst)))
+                        (start-event! audio-context event inst)))
             stop!  #(when-not (:function event)
-                      (stop-event! audio-ctx event inst))]
+                      (stop-event! audio-context event inst))]
         (schedule-event! engine (+ begin
                                    (/ offset 1000.0)) start!)
         (when-not (:function event)
@@ -266,11 +270,10 @@
   [score & [event-set]]
   (let [{:keys [one-off? async?]} *play-opts*
         _           (log/debug "Determining audio types...")
-        audio-types (determine-audio-types score)
-        audio-ctx   (or (:audio-context score) (new-audio-context))
+        score       (update score :audio-context #(or % (new-audio-context)))
         _           (log/debug "Setting up audio types...")
-        _           (set-up! audio-ctx audio-types score)
-        _           (refresh! audio-ctx audio-types score)
+        _           (set-up! score)
+        _           (refresh! score)
         playing?    (atom true)
         wait        (promise)
         _           (log/debug "Determining events to schedule...")
@@ -279,15 +282,14 @@
                       (earliest-offset event-set)
                       start)
         events      (-> (or event-set (:events score))
-                        (shift-events start' end))
-        clean-up    #(tear-down! audio-ctx audio-types score)]
+                        (shift-events start' end))]
     (log/debug "Scheduling events...")
-    (schedule-events! events score audio-ctx playing? wait)
+    (schedule-events! events score playing? wait)
     (cond
-      (and one-off? async?)       (future @wait (clean-up))
-      (and one-off? (not async?)) (do @wait (clean-up))
+      (and one-off? async?)       (future @wait (tear-down! score))
+      (and one-off? (not async?)) (do @wait (tear-down! score))
       (not async?)                @wait)
     {:score score
-     :stop! #(reset! playing? false)
+     :stop! #(do (reset! playing? false) (tear-down! score))
      :wait  #(deref wait)}))
 
