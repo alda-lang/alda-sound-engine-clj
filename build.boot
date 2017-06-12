@@ -1,12 +1,13 @@
 (set-env!
   :source-paths   #{"src"}
   :dependencies   '[; dev
-                    [adzerk/bootlaces    "0.1.13" :scope "test"]
-                    [alda/core           "0.1.2"  :scope "test"]
+                    [adzerk/bootlaces            "0.1.13" :scope "test"]
+                    [alda/core                   "0.2.2"  :scope "test"]
+                    [org.clojure/tools.namespace "0.2.11" :scope "test"]
 
                     ; dependencies
-                    [com.taoensso/timbre "4.7.4"]
-                    [org.clojars.sidec/jsyn "16.7.3"]])
+                    [com.taoensso/timbre "4.10.0"]
+                    [com.jsyn/jsyn       "20170328"]])
 
 (require '[adzerk.bootlaces :refer :all])
 

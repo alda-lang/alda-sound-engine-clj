@@ -6,8 +6,7 @@
 
 (defn- prepare-audio-context!
   [score]
-  (let [audio-ctx (or (:audio-context @score) (sound/new-audio-context))]
-    (swap! score assoc :audio-context audio-ctx)))
+  (swap! score update :audio-context #(or % (sound/new-audio-context))))
 
 (defn new-score
   ([]
@@ -26,9 +25,8 @@
    audio types to set up will be determined based on the instruments in the
    score."
   [score & [audio-type]]
-  (let [audio-types (or audio-type (sound/determine-audio-types @score))]
-    (prepare-audio-context! score)
-    (sound/set-up! (:audio-context @score) audio-types @score)))
+  (prepare-audio-context! score)
+  (sound/set-up! @score (or audio-type (sound/determine-audio-types score))))
 
 (defn tear-down!
   "Cleans up after a score after you're done using it.

@@ -62,7 +62,7 @@
   (if *midi-synth*
     (do
       (log/debug "Using the global *midi-synth*")
-      *midi-synth*)
+      (doto *midi-synth* .open))
     (do
       (fill-midi-synth-pool!)
       (drain-excess-midi-synths!)
@@ -188,3 +188,7 @@
           channel        (aget channels channel-number)]
       (log/debug "MIDI note off:" midi-note)
       (.noteOff ^MidiChannel channel midi-note))))
+
+(defn all-sound-off!
+  [audio-ctx]
+  (->> @audio-ctx :midi-synth .getChannels (pmap #(.allSoundOff %))))
