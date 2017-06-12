@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## 0.3.0 (2017-06-11)
+
+* There is now a distinction between `tear-down!` and `stop-playback!`.
+
+  `stop-playback!` can be used in contexts where you want to stop playback of a
+  score and you might want to start playing the score again after that. It stops
+  playback, but leaves the audio context in a state where it can continue to
+  play.
+
+* (BREAKING CHANGES) Cleaned up a bunch of code. In particular, a lot of
+  functions in `alda.sound` that took an `audio-ctx` and optionally a score now
+  just take a score that contains an `:audio-context`. This is a simpler API.
+
+* (BREAKING CHANGE) The score returned by `alda.sound/play!` is now guaranteed
+  to contain an `:audio-context`. If there isn't one on the score that's passed
+  in, a new audio context is generated and `assoc`'d onto the score.
+
 ## 0.2.0 (2017-05-17)
 
 * (BREAKING CHANGE) `alda.sound/play!` now returns a map containing multiple
