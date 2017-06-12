@@ -95,9 +95,13 @@
 
 (defmethod tear-down-audio-type! :midi
   [{:keys [audio-context] :as score} _]
+  (log/debug "Closing MIDI synth...")
   (midi/close-midi-synth! audio-context))
 
 (defn tear-down!
+  "Completely clean up after a score.
+
+   Playback may not necessarily be resumed after doing this."
   ([{:keys [audio-context] :as score}]
    ;; Prevent any future events from being executed. This is so that playback
    ;; will stop when we tear down the score mid-playback.
@@ -112,6 +116,34 @@
      (when (set-up? score audio-type)
        (swap! audio-context update :audio-types disj audio-type)
        (tear-down-audio-type! score audio-type)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defmulti stop-playback-for-audio-type!
+  (fn [score audio-type] audio-type))
+
+(defmethod stop-playback-for-audio-type! :default
+  [score audio-type]
+  (log/errorf
+    "No implementation of stop-playback-for-audiotype! defined for type %s"
+    audio-type))
+
+(defmethod stop-playback-for-audio-type! :midi
+  [{:keys [audio-context] :as score} _]
+  (log/debug "Stopping MIDI playback...")
+  (midi/all-sound-off! audio-context))
+
+(defn stop-playback!
+  "Stop playback, but leave the score in a state where playback can be resumed."
+  ([{:keys [audio-context] :as score}]
+   (.clearCommandQueue (:synthesis-engine @audio-context))
+   (stop-playback! score (determine-audio-types score)))
+  ([{:keys [audio-context] :as score} audio-type]
+   (if (coll? audio-type)
+     (pdoseq-block [a-t audio-type]
+       (stop-playback! score a-t))
+     (when (set-up? score audio-type)
+       (stop-playback-for-audio-type! score audio-type)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -290,6 +322,10 @@
       (and one-off? (not async?)) (do @wait (tear-down! score))
       (not async?)                @wait)
     {:score score
-     :stop! #(do (reset! playing? false) (tear-down! score))
+     :stop! #(do
+               (reset! playing? false)
+               (if one-off?
+                 (tear-down! score)
+                 (stop-playback! score)))
      :wait  #(deref wait)}))
 

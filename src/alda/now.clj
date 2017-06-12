@@ -26,7 +26,7 @@
    score."
   [score & [audio-type]]
   (prepare-audio-context! score)
-  (sound/set-up! @score audio-type))
+  (sound/set-up! @score (or audio-type (sound/determine-audio-types score))))
 
 (defn tear-down!
   "Cleans up after a score after you're done using it.
