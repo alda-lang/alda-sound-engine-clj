@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 0.3.1 (2017-06-22)
+
+* Fixed a bug in the MIDI `all-sound-off!` function where not every channel was
+  necessarily being stopped because of the laziness of `pmap`. Adding in a
+  `doall` forces evaluation of the "stop sound" function on every channel.
+
+  Also, added in a call to `MidiChannel.allNotesOff()` in addition to the
+  `MidiChannel.allSoundOff()` that we already had, to be extra sure that all
+  sound will stop.
+
 ## 0.3.0 (2017-06-11)
 
 * There is now a distinction between `tear-down!` and `stop-playback!`.

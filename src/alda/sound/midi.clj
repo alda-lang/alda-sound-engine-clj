@@ -191,4 +191,11 @@
 
 (defn all-sound-off!
   [audio-ctx]
-  (->> @audio-ctx :midi-synth .getChannels (pmap #(.allSoundOff %))))
+  (letfn [(stop-channel! [^MidiChannel channel]
+            (.allNotesOff channel)
+            (.allSoundOff channel))]
+    (->> @audio-ctx
+      :midi-synth
+      .getChannels
+      (pmap stop-channel!)
+      doall)))
