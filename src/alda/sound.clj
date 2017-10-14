@@ -291,9 +291,6 @@
         sequencer (doto (MidiSystem/getSequencer) .open)
         receiver (.getReceiver sequencer)
         currentTrack (.createTrack seq)]
-    (println "Hello!")
-    (println audio-context)
-    (println score)
     ;; warm up the recorder
     (doto sequencer
       (.setSequence seq)
@@ -301,14 +298,19 @@
       (.recordEnable currentTrack -1)
       (.startRecording))
     ;; Pipe events into recorder
-    (println)
     (doseq [{:keys [offset instrument duration midi-note volume] :as event} events]
       (let
-          [msg (doto (new ShortMessage)
-                 (.setMessage ShortMessage/NOTE_ON midi-note
-                              (* 127 volume)))]
-        (println offset)
-        (doto receiver (.send msg, (* offset 1000)))))
+          [playMessage (doto (new ShortMessage)
+                         (.setMessage ShortMessage/NOTE_ON midi-note
+                                      (* 127 volume)))
+           stopMessage (when-not (:function event)
+                         (doto (new ShortMessage)
+                           (.setMessage ShortMessage/NOTE_OFF midi-note
+                                        (* 127 volume))))]
+        (doto receiver (.send playMessage (* offset 1000)))
+        (when stopMessage
+          (doto receiver (.send stopMessage (+ (* offset 1000)
+                                               (* duration 1000)))))))
     ;; Stop our recorder
     (doto sequencer
       .stopRecording
