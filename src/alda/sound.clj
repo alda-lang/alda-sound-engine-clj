@@ -5,7 +5,12 @@
                                      parse-position)]
             [taoensso.timbre :as    log])
   (:import [com.softsynth.shared.time TimeStamp ScheduledCommand]
-           [com.jsyn.engine SynthesisEngine]))
+           [com.jsyn.engine SynthesisEngine]
+           [javax.sound.midi Sequence]
+           [javax.sound.midi MidiSystem]
+           [javax.sound.midi ShortMessage]
+           [java.io File]
+           ))
 
 (def ^:dynamic *synthesis-engine* nil)
 
@@ -278,6 +283,39 @@
                                (/ (score-length events) 1000.0)
                                1) end!)))
 
+(defn record!
+  [events score]
+  ;; TODO What does PPQ mean? is 24 good? Probably need args for that
+  (let [{:keys [instruments audio-context]} score
+        seq (new Sequence Sequence/PPQ 24)
+        sequencer (doto (MidiSystem/getSequencer) .open)
+        receiver (.getReceiver sequencer)
+        currentTrack (.createTrack seq)]
+    (println "Hello!")
+    (println audio-context)
+    (println score)
+    ;; warm up the recorder
+    (doto sequencer
+      (.setSequence seq)
+      (.setTickPosition 0)
+      (.recordEnable currentTrack -1)
+      (.startRecording))
+    ;; Pipe events into recorder
+    (println)
+    (doseq [{:keys [offset instrument duration midi-note volume] :as event} events]
+      (let
+          [msg (doto (new ShortMessage)
+                 (.setMessage ShortMessage/NOTE_ON midi-note
+                              (* 127 volume)))]
+        (println offset)
+        (doto receiver (.send msg, (* offset 1000)))))
+    ;; Stop our recorder
+    (doto sequencer
+      .stopRecording
+      .close)
+    ;; Write out!
+    (MidiSystem/write seq 0 (new File "test.mid"))))
+
 (defn play!
   "Plays an Alda score, optionally from given start/end marks determined by
    *play-opts*.
@@ -316,6 +354,7 @@
         events      (-> (or event-set (:events score))
                         (shift-events start' end))]
     (log/debug "Scheduling events...")
+    (record! events score)
     (schedule-events! events score playing? wait)
     (cond
       (and one-off? async?)       (future @wait (tear-down! score))
@@ -328,4 +367,3 @@
                  (tear-down! score)
                  (stop-playback! score)))
      :wait  #(deref wait)}))
-
