@@ -283,7 +283,7 @@
                                (/ (score-length events) 1000.0)
                                1) end!)))
 
-(defn record!
+(defn record-midi!
   [events score]
   ;; TODO What does PPQ mean? is 24 good? Probably need args for that
   (let [{:keys [instruments audio-context]} score
@@ -307,10 +307,10 @@
                          (doto (new ShortMessage)
                            (.setMessage ShortMessage/NOTE_OFF midi-note
                                         (* 127 volume))))]
-        (doto receiver (.send playMessage (* offset 1000)))
+        (.send receiver playMessage (* offset 1000))
         (when stopMessage
-          (doto receiver (.send stopMessage (+ (* offset 1000)
-                                               (* duration 1000)))))))
+          (.send receiver stopMessage (+ (* offset 1000)
+                                         (* duration 1000))))))
     ;; Stop our recorder
     (doto sequencer
       .stopRecording
@@ -356,7 +356,7 @@
         events      (-> (or event-set (:events score))
                         (shift-events start' end))]
     (log/debug "Scheduling events...")
-    (record! events score)
+    (record-midi! events score)
     (schedule-events! events score playing? wait)
     (cond
       (and one-off? async?)       (future @wait (tear-down! score))
