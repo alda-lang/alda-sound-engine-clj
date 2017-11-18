@@ -9,6 +9,7 @@
            [javax.sound.midi Sequence]
            [javax.sound.midi MidiSystem]
            [javax.sound.midi ShortMessage]
+           [javax.sound.midi Synthesizer]
            [java.io File]
            ))
 
@@ -287,6 +288,9 @@
   [events score]
   ;; TODO What does PPQ mean? is 24 good? Probably need args for that
   (let [{:keys [instruments audio-context]} score
+        {:keys [midi-synth midi-channels]} @audio-context
+        channels  (.getChannels ^Synthesizer midi-synth)
+
         seq (new Sequence Sequence/PPQ 24)
         sequencer (doto (MidiSystem/getSequencer) .open)
         receiver (.getReceiver sequencer)
@@ -300,17 +304,25 @@
     ;; Pipe events into recorder
     (doseq [{:keys [offset instrument duration midi-note volume] :as event} events]
       (let
-          [playMessage (doto (new ShortMessage)
-                         (.setMessage ShortMessage/NOTE_ON midi-note
+          [channel-number (-> instrument midi-channels :channel)
+           ;; channel        (aget channels channel-number)
+
+           instrumentMessage (doto (new ShortMessage)
+                               (.setMessage ShortMessage/PROGRAM_CHANGE channel-number 25 0))
+
+           playMessage (doto (new ShortMessage)
+                         (.setMessage ShortMessage/NOTE_ON channel-number midi-note
                                       (* 127 volume)))
            stopMessage (when-not (:function event)
                          (doto (new ShortMessage)
-                           (.setMessage ShortMessage/NOTE_OFF midi-note
-                                        (* 127 volume))))]
-        (.send receiver playMessage (* offset 1000))
+                           (.setMessage ShortMessage/NOTE_OFF channel-number midi-note
+                                        (* 127 volume))))
+           offset (* offset 1000)
+           duration (* duration 1000)]
+        (.send receiver instrumentMessage offset)
+        (.send receiver playMessage offset)
         (when stopMessage
-          (.send receiver stopMessage (+ (* offset 1000)
-                                         (* duration 1000))))))
+          (.send receiver stopMessage (+ offset duration)))))
     ;; Stop our recorder
     (doto sequencer
       .stopRecording
