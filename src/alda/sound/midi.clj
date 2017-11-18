@@ -1,7 +1,7 @@
 (ns alda.sound.midi
   (:require [taoensso.timbre :as log])
   (:import (java.util.concurrent LinkedBlockingQueue)
-           (javax.sound.midi MidiSystem Synthesizer MidiChannel)))
+           (javax.sound.midi MidiSystem Synthesizer MidiChannel ShortMessage)))
 
 (comment
   "There are 16 channels per MIDI synth (1-16);
@@ -117,6 +117,21 @@
             :let [synth    (:midi-synth @audio-ctx)
                   channels (.getChannels ^Synthesizer synth)]]
       (load-instrument! patch (aget channels channel)))))
+
+(defn- load-instrument-receiver! [patch-number ^Integer channel-number receiver]
+  (let [instrumentMessage (doto (new ShortMessage)
+                            (.setMessage ShortMessage/PROGRAM_CHANGE
+                                         channel-number patch-number 0))]
+    (.send receiver instrumentMessage 0)))
+
+(defn load-instruments-receiver!
+  "Load instruments into channels of a midi receiver."
+  [score receiver]
+  (log/debug "Loading MIDI instruments into channels...")
+  (let [midi-channels (ids->channels score)]
+    (doseq [{:keys [channel patch]} (set (vals midi-channels))
+            :when patch]
+      (load-instrument-receiver! patch channel receiver))))
 
 (defn get-midi-synth!
   "If there isn't already a :midi-synth in the audio context, finds an

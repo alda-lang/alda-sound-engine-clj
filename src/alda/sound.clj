@@ -302,13 +302,10 @@
       (.recordEnable currentTrack -1)
       (.startRecording))
     ;; Pipe events into recorder
+    (midi/load-instruments-receiver! score receiver)
     (doseq [{:keys [offset instrument duration midi-note volume] :as event} events]
       (let
           [channel-number (-> instrument midi-channels :channel)
-           ;; channel        (aget channels channel-number)
-
-           instrumentMessage (doto (new ShortMessage)
-                               (.setMessage ShortMessage/PROGRAM_CHANGE channel-number 25 0))
 
            playMessage (doto (new ShortMessage)
                          (.setMessage ShortMessage/NOTE_ON channel-number midi-note
@@ -319,7 +316,6 @@
                                         (* 127 volume))))
            offset (* offset 1000)
            duration (* duration 1000)]
-        (.send receiver instrumentMessage offset)
         (.send receiver playMessage offset)
         (when stopMessage
           (.send receiver stopMessage (+ offset duration)))))
