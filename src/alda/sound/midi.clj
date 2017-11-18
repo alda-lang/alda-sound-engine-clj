@@ -121,7 +121,8 @@
 (defn- load-instrument-receiver! [patch-number ^Integer channel-number receiver]
   (let [instrumentMessage (doto (new ShortMessage)
                             (.setMessage ShortMessage/PROGRAM_CHANGE
-                                         channel-number patch-number 0))]
+                                         ;; TODO why does this need to be -1
+                                         channel-number (dec patch-number) 0))]
     (.send receiver instrumentMessage 0)))
 
 (defn load-instruments-receiver!
@@ -214,3 +215,11 @@
       .getChannels
       (pmap stop-channel!)
       doall)))
+
+(defn play-sequence!
+  "Plays a sequence on a java midi sequencer."
+  [sequence]
+  (doto (MidiSystem/getSequencer)
+    (.open)
+    (.setSequence sequence)
+    (.start)))

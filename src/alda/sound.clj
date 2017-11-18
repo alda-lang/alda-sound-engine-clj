@@ -15,6 +15,10 @@
 
 (def ^:dynamic *synthesis-engine* nil)
 
+;; FIXME workers don't die properly when nil?
+;; TODO set this to true
+(def +use-jysn+ nil)
+
 (defn new-synthesis-engine
   []
   (doto (SynthesisEngine.) .start))
@@ -284,14 +288,24 @@
                                (/ (score-length events) 1000.0)
                                1) end!)))
 
-(defn record-midi!
+(defn schedule-wait!
+  "Simple function which waits for a sequencer to finish."
+  [score sequencer wait]
+  (let [{:keys [instruments audio-context]} score
+        engine (:synthesis-engine @audio-context)
+        begin  (.getCurrentTime ^SynthesisEngine engine)
+        end! #(deliver wait :done)]
+    (schedule-event! engine (+ begin
+                               (/ (.getMicrosecondLength sequencer) 1000.0 1000.0)
+                               1) end!)))
+(defn score-to-sequence
   [events score]
-  ;; TODO What does PPQ mean? is 24 good? Probably need args for that
   (let [{:keys [instruments audio-context]} score
         {:keys [midi-synth midi-channels]} @audio-context
         channels  (.getChannels ^Synthesizer midi-synth)
 
-        seq (new Sequence Sequence/PPQ 24)
+        ;; TODO make resolution configurable
+        seq (new Sequence Sequence/SMPTE_24)
         sequencer (doto (MidiSystem/getSequencer) .open)
         receiver (.getReceiver sequencer)
         currentTrack (.createTrack seq)]
@@ -305,15 +319,16 @@
     (midi/load-instruments-receiver! score receiver)
     (doseq [{:keys [offset instrument duration midi-note volume] :as event} events]
       (let
-          [channel-number (-> instrument midi-channels :channel)
+          [volume (* 127 volume)
+           channel-number (-> instrument midi-channels :channel)
 
            playMessage (doto (new ShortMessage)
                          (.setMessage ShortMessage/NOTE_ON channel-number midi-note
-                                      (* 127 volume)))
+                                      volume))
            stopMessage (when-not (:function event)
                          (doto (new ShortMessage)
                            (.setMessage ShortMessage/NOTE_OFF channel-number midi-note
-                                        (* 127 volume))))
+                                        volume)))
            offset (* offset 1000)
            duration (* duration 1000)]
         (.send receiver playMessage offset)
@@ -324,7 +339,9 @@
       .stopRecording
       .close)
     ;; Write out!
-    (MidiSystem/write seq 0 (new File "test.mid"))))
+    ;; TODO make this into a proper command
+    ;; (MidiSystem/write seq 0 (new File "test.mid"))
+    seq))
 
 (defn play!
   "Plays an Alda score, optionally from given start/end marks determined by
@@ -364,8 +381,10 @@
         events      (-> (or event-set (:events score))
                         (shift-events start' end))]
     (log/debug "Scheduling events...")
-    (record-midi! events score)
-    (schedule-events! events score playing? wait)
+    (if (not +use-jysn+)
+      (schedule-wait! score (midi/play-sequence! (score-to-sequence events score)) wait)
+
+      (schedule-events! events score playing? wait))
     (cond
       (and one-off? async?)       (future @wait (tear-down! score))
       (and one-off? (not async?)) (do @wait (tear-down! score))
