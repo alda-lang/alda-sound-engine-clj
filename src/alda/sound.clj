@@ -15,9 +15,9 @@
 
 (def ^:dynamic *synthesis-engine* nil)
 
-;; FIXME workers don't die properly when nil?
-;; TODO set this to true
-(def +use-jysn+ nil)
+;; FIXME workers don't die properly when true?
+;; TODO set this to nil
+(def ^:dynamic *use-midi-sequencer* true)
 
 (defn new-synthesis-engine
   []
@@ -299,14 +299,13 @@
                                (/ (.getMicrosecondLength sequencer) 1000.0 1000.0)
                                1) end!)))
 (defn score-to-sequence
-  [events score]
+  [events score sequencer]
   (let [{:keys [instruments audio-context]} score
         {:keys [midi-synth midi-channels]} @audio-context
         channels  (.getChannels ^Synthesizer midi-synth)
 
         ;; TODO make resolution configurable
-        seq (new Sequence Sequence/SMPTE_24)
-        sequencer (doto (MidiSystem/getSequencer) .open)
+        seq (new Sequence Sequence/PPQ Sequence/SMPTE_24)
         receiver (.getReceiver sequencer)
         currentTrack (.createTrack seq)]
     ;; warm up the recorder
@@ -381,8 +380,11 @@
         events      (-> (or event-set (:events score))
                         (shift-events start' end))]
     (log/debug "Scheduling events...")
-    (if (not +use-jysn+)
-      (schedule-wait! score (midi/play-sequence! (score-to-sequence events score)) wait)
+    (if *use-midi-sequencer*
+      (let [sequencer (doto (MidiSystem/getSequencer) .open)]
+        (schedule-wait! score (midi/play-sequence! sequencer
+                                                   (score-to-sequence events score sequencer))
+                        wait))
 
       (schedule-events! events score playing? wait))
     (cond

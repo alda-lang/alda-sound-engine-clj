@@ -218,7 +218,7 @@
 
 (defn play-sequence!
   "Plays a sequence on a java midi sequencer."
-  [sequence]
+  [sequencer sequence]
   (doto (MidiSystem/getSequencer)
     (.open)
     (.setSequence sequence)
