@@ -8,6 +8,7 @@
            [com.jsyn.engine SynthesisEngine]
            [javax.sound.midi Sequence]
            [javax.sound.midi MidiSystem]
+           [javax.sound.midi MidiDevice]
            [javax.sound.midi ShortMessage]
            [javax.sound.midi Synthesizer]
            [java.io File]
@@ -381,10 +382,13 @@
                         (shift-events start' end))]
     (log/debug "Scheduling events...")
     (if *use-midi-sequencer*
-      (let [sequencer (doto (MidiSystem/getSequencer) .open)]
-        (schedule-wait! score (midi/play-sequence! sequencer
-                                                   (score-to-sequence events score sequencer))
+      (let [sequencer (doto (MidiSystem/getSequencer false) .open)]
+        (schedule-wait! score
+                        (midi/play-sequence!
+                         sequencer
+                         (score-to-sequence events score sequencer))
                         wait))
+
 
       (schedule-events! events score playing? wait))
     (cond

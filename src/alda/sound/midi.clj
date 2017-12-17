@@ -219,7 +219,11 @@
 (defn play-sequence!
   "Plays a sequence on a java midi sequencer."
   [sequencer sequence]
-  (doto (MidiSystem/getSequencer)
+  ;; Set the sequencer to use our midi synth
+  (.setReceiver (.getTransmitter sequencer)
+                (.getReceiver *midi-synth*))
+  ;; Play the sequencer
+  (doto sequencer
     (.open)
     (.setSequence sequence)
     (.start)))
