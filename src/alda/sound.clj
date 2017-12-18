@@ -289,18 +289,18 @@
 
 
 (defn score-to-sequence
-  [events score sequencer]
+  [events score]
   (let [{:keys [instruments audio-context]} score
         {:keys [midi-synth midi-channels]} @audio-context
         channels  (.getChannels ^Synthesizer midi-synth)
 
         ;; TODO make resolution configurable
         seq (new Sequence Sequence/PPQ Sequence/SMPTE_24)
+        sequencer (doto (MidiSystem/getSequencer false) .open)
         receiver (.getReceiver sequencer)
         currentTrack (.createTrack seq)]
     ;; warm up the recorder
     (doto sequencer
-      .open
       (.setSequence seq)
       (.setTickPosition 0)
       (.recordEnable currentTrack -1)
@@ -380,9 +380,7 @@
     (if *use-midi-sequencer*
       ;; play with midi sequencer
       (midi/play-sequence!
-       (score-to-sequence events score
-                          (doto (MidiSystem/getSequencer false)
-                            .open))
+       (score-to-sequence events score)
        #(deliver wait :done))
       ;; play with jsyn
       (do

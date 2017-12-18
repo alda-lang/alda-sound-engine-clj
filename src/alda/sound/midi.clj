@@ -21,6 +21,8 @@
 
 (def ^:dynamic *midi-synth* nil)
 
+(def ^:dynamic *midi-sequencer* (MidiSystem/getSequencer false))
+
 (def ^:const MIDI-END-OF-TRACK 0x2F)
 
 (defn open-midi-synth!
@@ -218,24 +220,28 @@ If receiver is provided, audio-ctx is not used at all."
 (defn play-sequence!
   "Plays a sequence on a java midi sequencer.
 
-Execute callback when sequence is done."
+  Execute callback when sequence is done."
   [sequence promise!]
-  (let [sequencer
-        (doto (MidiSystem/getSequencer false)
-          .open)]
-    ;; (.open sequencer)
-    ;; Set the sequencer to use our midi synth
-    (.setReceiver (.getTransmitter sequencer)
-                  (.getReceiver *midi-synth*))
-    ;; handle end of track
-    (.addMetaEventListener sequencer
-                           (proxy
-                               [javax.sound.midi.MetaEventListener] []
-                             (meta [event]
-                               (when (= (.getType event) MIDI-END-OF-TRACK)
-                                 (promise!)))))
-
-    ;; Play the sequencer
-    (doto sequencer
-      (.setSequence sequence)
-      .start)))
+  (let [sequencer *midi-sequencer*]
+    (if (not (.isOpen sequencer))
+      (do
+        (.open sequencer)
+        ;; Set the sequencer to use our midi synth
+        (.setReceiver (.getTransmitter sequencer)
+                      (.getReceiver *midi-synth*))
+        ;; handle end of track
+        (.addMetaEventListener sequencer
+                               (proxy
+                                   [javax.sound.midi.MetaEventListener] []
+                                 (meta [event]
+                                   (when (= (.getType event) MIDI-END-OF-TRACK)
+                                     (.close sequencer)
+                                     (promise!)))))
+        ;; Play the sequencer
+        (doto sequencer
+          (.setSequence sequence)
+          .start))
+      (do
+        ;; Clear our play status
+        (promise!)
+        (log/debug "Attempted to play on an open sequencer!")))))
