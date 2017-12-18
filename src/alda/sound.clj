@@ -6,11 +6,9 @@
             [taoensso.timbre :as    log])
   (:import [com.softsynth.shared.time TimeStamp ScheduledCommand]
            [com.jsyn.engine SynthesisEngine]
-           [javax.sound.midi Sequence]
-           [javax.sound.midi MidiSystem]
-           [javax.sound.midi MidiDevice]
-           [javax.sound.midi ShortMessage]
-           [javax.sound.midi Synthesizer]
+           [javax.sound.midi
+            Sequence MidiSystem MidiDevice
+            ShortMessage Synthesizer MetaMessage]
            [java.io File]
            ))
 
@@ -289,16 +287,7 @@
                                (/ (score-length events) 1000.0)
                                1) end!)))
 
-(defn schedule-wait!
-  "Simple function which waits for a sequencer to finish."
-  [score sequencer wait]
-  (let [{:keys [instruments audio-context]} score
-        engine (:synthesis-engine @audio-context)
-        begin  (.getCurrentTime ^SynthesisEngine engine)
-        end! #(deliver wait :done)]
-    (schedule-event! engine (+ begin
-                               (/ (.getMicrosecondLength sequencer) 1000.0 1000.0)
-                               1) end!)))
+
 (defn score-to-sequence
   [events score sequencer]
   (let [{:keys [instruments audio-context]} score
@@ -311,6 +300,7 @@
         currentTrack (.createTrack seq)]
     ;; warm up the recorder
     (doto sequencer
+      .open
       (.setSequence seq)
       (.setTickPosition 0)
       (.recordEnable currentTrack -1)
@@ -334,6 +324,12 @@
         (.send receiver playMessage offset)
         (when stopMessage
           (.send receiver stopMessage (+ offset duration)))))
+
+    ;; auto-add a end of track metamessage
+    (.send receiver
+           (doto (new MetaMessage)
+             (.setMessage midi/MIDI-END-OF-TRACK nil 0)) -1)
+
     ;; Stop our recorder
     (doto sequencer
       .stopRecording
@@ -382,19 +378,19 @@
                         (shift-events start' end))]
     (log/debug "Scheduling events...")
     (if *use-midi-sequencer*
-      (let [sequencer (doto (MidiSystem/getSequencer false) .open)]
-        (schedule-wait! score
-                        (midi/play-sequence!
-                         sequencer
-                         (score-to-sequence events score sequencer))
-                        wait))
-
-
-      (schedule-events! events score playing? wait))
-    (cond
-      (and one-off? async?)       (future @wait (tear-down! score))
-      (and one-off? (not async?)) (do @wait (tear-down! score))
-      (not async?)                @wait)
+      ;; play with midi sequencer
+      (midi/play-sequence!
+       (score-to-sequence events score
+                          (doto (MidiSystem/getSequencer false)
+                            .open))
+       #(deliver wait :done))
+      ;; play with jsyn
+      (do
+        (schedule-events! events score playing? wait)
+        (cond
+          (and one-off? async?)       (future @wait (tear-down! score))
+          (and one-off? (not async?)) (do @wait (tear-down! score))
+          (not async?)                @wait)))
     {:score score
      :stop! #(do
                (reset! playing? false)

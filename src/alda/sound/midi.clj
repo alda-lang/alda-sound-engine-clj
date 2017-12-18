@@ -1,7 +1,9 @@
 (ns alda.sound.midi
   (:require [taoensso.timbre :as log])
   (:import (java.util.concurrent LinkedBlockingQueue)
-           (javax.sound.midi MidiSystem Synthesizer MidiChannel ShortMessage)))
+           (javax.sound.midi MidiSystem Synthesizer
+                             MidiChannel ShortMessage
+                             MetaEventListener)))
 
 (comment
   "There are 16 channels per MIDI synth (1-16);
@@ -18,6 +20,8 @@
    synth instance and use it to play one score at a time.")
 
 (def ^:dynamic *midi-synth* nil)
+
+(def ^:const MIDI-END-OF-TRACK 0x2F)
 
 (defn open-midi-synth!
   []
@@ -121,7 +125,6 @@
 (defn- load-instrument-receiver! [patch-number ^Integer channel-number receiver]
   (let [instrumentMessage (doto (new ShortMessage)
                             (.setMessage ShortMessage/PROGRAM_CHANGE
-                                         ;; TODO why does this need to be -1
                                          channel-number (dec patch-number) 0))]
     (.send receiver instrumentMessage 0)))
 
@@ -217,13 +220,26 @@
       doall)))
 
 (defn play-sequence!
-  "Plays a sequence on a java midi sequencer."
-  [sequencer sequence]
-  ;; Set the sequencer to use our midi synth
-  (.setReceiver (.getTransmitter sequencer)
-                (.getReceiver *midi-synth*))
-  ;; Play the sequencer
-  (doto sequencer
-    (.open)
-    (.setSequence sequence)
-    (.start)))
+  "Plays a sequence on a java midi sequencer.
+
+Execute callback when sequence is done."
+  [sequence promise!]
+  (let [sequencer
+        (doto (MidiSystem/getSequencer false)
+          .open)]
+    ;; (.open sequencer)
+    ;; Set the sequencer to use our midi synth
+    (.setReceiver (.getTransmitter sequencer)
+                  (.getReceiver *midi-synth*))
+    ;; handle end of track
+    (.addMetaEventListener sequencer
+                           (proxy
+                               [javax.sound.midi.MetaEventListener] []
+                             (meta [event]
+                               (when (= (.getType event) MIDI-END-OF-TRACK)
+                                 (promise!)))))
+
+    ;; Play the sequencer
+    (doto sequencer
+      (.setSequence sequence)
+      .start)))
