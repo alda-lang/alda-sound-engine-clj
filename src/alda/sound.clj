@@ -306,7 +306,7 @@
       (.recordEnable currentTrack -1)
       (.startRecording))
     ;; Pipe events into recorder
-    (midi/load-instruments-receiver! score receiver)
+    (midi/load-instruments! nil score receiver)
     (doseq [{:keys [offset instrument duration midi-note volume] :as event} events]
       (let
           [volume (* 127 volume)

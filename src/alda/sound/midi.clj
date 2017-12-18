@@ -111,31 +111,27 @@
 (defn- load-instrument! [patch-number ^MidiChannel channel]
   (.programChange channel (dec patch-number)))
 
-(defn load-instruments!
-  [audio-ctx score]
-  (log/debug "Loading MIDI instruments into channels...")
-  (let [midi-channels (ids->channels score)]
-    (swap! audio-ctx assoc :midi-channels midi-channels)
-    (doseq [{:keys [channel patch]} (set (vals midi-channels))
-            :when patch
-            :let [synth    (:midi-synth @audio-ctx)
-                  channels (.getChannels ^Synthesizer synth)]]
-      (load-instrument! patch (aget channels channel)))))
-
 (defn- load-instrument-receiver! [patch-number ^Integer channel-number receiver]
   (let [instrumentMessage (doto (new ShortMessage)
                             (.setMessage ShortMessage/PROGRAM_CHANGE
                                          channel-number (dec patch-number) 0))]
     (.send receiver instrumentMessage 0)))
 
-(defn load-instruments-receiver!
-  "Load instruments into channels of a midi receiver."
-  [score receiver]
+(defn load-instruments!
+  "Load instruments into audio-ctx's synth, or receiver instead if provided.
+
+If receiver is provided, audio-ctx is not used at all."
+  [audio-ctx score & [receiver]]
   (log/debug "Loading MIDI instruments into channels...")
   (let [midi-channels (ids->channels score)]
     (doseq [{:keys [channel patch]} (set (vals midi-channels))
             :when patch]
-      (load-instrument-receiver! patch channel receiver))))
+      (if receiver
+        (load-instrument-receiver! patch channel receiver)
+        (do (swap! audio-ctx assoc :midi-channels midi-channels)
+            (let [synth (:midi-synth @audio-ctx)
+                  channels (.getChannels ^Synthesizer synth)]
+              (load-instrument! patch (aget channels channel))))))))
 
 (defn get-midi-synth!
   "If there isn't already a :midi-synth in the audio context, finds an
