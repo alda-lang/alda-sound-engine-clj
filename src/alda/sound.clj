@@ -4,33 +4,15 @@
                                      pdoseq-block
                                      parse-position)]
             [taoensso.timbre :as    log])
-  (:import [com.softsynth.shared.time TimeStamp ScheduledCommand]
-           [com.jsyn.engine SynthesisEngine]
-           [javax.sound.midi
+  (:import [javax.sound.midi
             Sequence MidiSystem MidiDevice
             ShortMessage Synthesizer MetaMessage]
-           [java.io File]
-           ))
-
-(def ^:dynamic *synthesis-engine* nil)
-
-;; FIXME workers don't die properly when true?
-;; TODO set this to nil
-(def ^:dynamic *use-midi-sequencer* true)
-
-(defn new-synthesis-engine
-  []
-  (doto (SynthesisEngine.) .start))
-
-(defn start-synthesis-engine!
-  []
-  (alter-var-root #'*synthesis-engine* (constantly (new-synthesis-engine))))
+           [java.io File]))
 
 (defn new-audio-context
   []
   (atom
-    {:audio-types      #{}
-     :synthesis-engine (or *synthesis-engine* (new-synthesis-engine))}))
+    {:audio-types #{}}))
 
 (defn set-up?
   [{:keys [audio-context] :as score} audio-type]
@@ -112,9 +94,8 @@
 
    Playback may not necessarily be resumed after doing this."
   ([{:keys [audio-context] :as score}]
-   ;; Prevent any future events from being executed. This is so that playback
-   ;; will stop when we tear down the score mid-playback.
-   (.clearCommandQueue (:synthesis-engine @audio-context))
+   ;; TODO: implement teardown for MIDI Sequencer-based playback?
+   ,,,
    ;; Do any necessary clean-up for each audio type.
    ;; e.g. for MIDI, close the MidiSynthesizer.
    (tear-down! score (determine-audio-types score)))
@@ -145,7 +126,7 @@
 (defn stop-playback!
   "Stop playback, but leave the score in a state where playback can be resumed."
   ([{:keys [audio-context] :as score}]
-   (.clearCommandQueue (:synthesis-engine @audio-context))
+   ;; TODO: implement stop-playback for MIDI Sequencer-based playback?
    (stop-playback! score (determine-audio-types score)))
   ([{:keys [audio-context] :as score} audio-type]
    (if (coll? audio-type)
@@ -257,37 +238,6 @@
                    events)
          (sort-by :offset))))
 
-(defn schedule-event!
-  [^SynthesisEngine engine offset f]
-  (let [ts  (TimeStamp. offset)
-        cmd (proxy [ScheduledCommand] [] (run [] (f)))]
-    (.scheduleCommand engine ts cmd)))
-
-(defn schedule-events!
-  [events score playing? wait]
-  (let [{:keys [instruments audio-context]} score
-        engine (:synthesis-engine @audio-context)
-        begin  (.getCurrentTime ^SynthesisEngine engine)
-        end!   #(deliver wait :done)]
-    (pdoseq-block [{:keys [offset instrument duration] :as event} events]
-      (let [inst   (-> instrument instruments)
-            start! #(when @playing?
-                      (if-let [f (:function event)]
-                        (future (f))
-                        (start-event! audio-context event inst)))
-            stop!  #(when-not (:function event)
-                      (stop-event! audio-context event inst))]
-        (schedule-event! engine (+ begin
-                                   (/ offset 1000.0)) start!)
-        (when-not (:function event)
-          (schedule-event! engine (+ begin
-                                     (/ offset 1000.0)
-                                     (/ duration 1000.0)) stop!))))
-    (schedule-event! engine (+ begin
-                               (/ (score-length events) 1000.0)
-                               1) end!)))
-
-
 (defn score-to-sequence
   [events score]
   (let [{:keys [instruments audio-context]} score
@@ -377,18 +327,13 @@
         events      (-> (or event-set (:events score))
                         (shift-events start' end))]
     (log/debug "Scheduling events...")
-    (if *use-midi-sequencer*
-      ;; play with midi sequencer
-      (midi/play-sequence!
-       (score-to-sequence events score)
-       #(deliver wait :done))
-      ;; play with jsyn
-      (do
-        (schedule-events! events score playing? wait)
-        (cond
-          (and one-off? async?)       (future @wait (tear-down! score))
-          (and one-off? (not async?)) (do @wait (tear-down! score))
-          (not async?)                @wait)))
+    (midi/play-sequence!
+      (score-to-sequence events score)
+      #(deliver wait :done))
+    (cond
+      (and one-off? async?)       (future @wait (tear-down! score))
+      (and one-off? (not async?)) (do @wait (tear-down! score))
+      (not async?)                @wait)
     {:score score
      :stop! #(do
                (reset! playing? false)
