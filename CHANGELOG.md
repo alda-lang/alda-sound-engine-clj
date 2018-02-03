@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 0.3.2 (2018-02-03)
+
+* Fixed a bug where `:from` playback option was being ignored when an
+  `event-set` argument was included to `play!`.
+
+* Added some debug logging around `*play-opts*` and playback start/end offsets.
+
 ## 0.3.1 (2017-06-22)
 
 * Fixed a bug in the MIDI `all-sound-off!` function where not every channel was

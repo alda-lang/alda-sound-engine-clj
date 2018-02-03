@@ -228,7 +228,9 @@
                    (str "Do not support " (type pos) " as a play time."))))))
 
 (defn start-finish-times [{:keys [from to]} markers]
-  (map (partial lookup-time markers) [from to]))
+  (let [[start end] (map (partial lookup-time markers) [from to])]
+    (log/debugf "from: %s => %s     to: %s => %s" from start to end)
+    [start end]))
 
 (defn earliest-offset
   [event-set]
@@ -238,6 +240,7 @@
 
 (defn shift-events
   [events offset cut-off]
+  (log/debugf "Keeping events between %s and %s." offset cut-off)
   (let [offset  (or offset 0)
         cut-off (when cut-off (- cut-off offset))
         keep?   (if cut-off
@@ -309,9 +312,20 @@
         playing?    (atom true)
         wait        (promise)
         _           (log/debug "Determining events to schedule...")
+        _           (log/debug (str "*play-opts*: " *play-opts*))
         [start end] (start-finish-times *play-opts* (:markers score))
-        start'      (if event-set
+        start'      (cond
+                      ;; If a "from" offset is explicitly provided, use the
+                      ;; calculated start offset derived from it.
+                      (:from *play-opts*)
+                      start
+
+                      ;; If an event-set is provided, use the earliest event's
+                      ;; offset.
+                      event-set
                       (earliest-offset event-set)
+
+                      :else
                       start)
         events      (-> (or event-set (:events score))
                         (shift-events start' end))]
