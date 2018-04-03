@@ -94,8 +94,7 @@
 
    Playback may not necessarily be resumed after doing this."
   ([{:keys [audio-context] :as score}]
-   ;; TODO: implement teardown for MIDI Sequencer-based playback?
-   ,,,
+   (.close midi/*midi-sequencer*)
    ;; Do any necessary clean-up for each audio type.
    ;; e.g. for MIDI, close the MidiSynthesizer.
    (tear-down! score (determine-audio-types score)))
@@ -126,7 +125,7 @@
 (defn stop-playback!
   "Stop playback, but leave the score in a state where playback can be resumed."
   ([{:keys [audio-context] :as score}]
-   ;; TODO: implement stop-playback for MIDI Sequencer-based playback?
+   (.close midi/*midi-sequencer*)
    (stop-playback! score (determine-audio-types score)))
   ([{:keys [audio-context] :as score} audio-type]
    (if (coll? audio-type)
