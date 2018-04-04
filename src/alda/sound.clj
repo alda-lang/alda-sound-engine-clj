@@ -12,8 +12,7 @@
 (defn new-audio-context
   []
   (atom
-    {:audio-types #{}
-     :midi-sequencer (midi/new-midi-sequencer)}))
+    {:audio-types #{}}))
 
 (defn set-up?
   [{:keys [audio-context] :as score} audio-type]
@@ -30,7 +29,8 @@
 (defmethod set-up-audio-type! :midi
   [{:keys [audio-context] :as score} _]
   (log/debug "Setting up MIDI...")
-  (midi/get-midi-synth! audio-context))
+  (midi/get-midi-synth! audio-context)
+  (midi/get-midi-sequencer! audio-context))
 
 (declare determine-audio-types)
 
@@ -87,7 +87,8 @@
 
 (defmethod tear-down-audio-type! :midi
   [{:keys [audio-context] :as score} _]
-  (log/debug "Closing MIDI synth...")
+  (log/debug "Closing MIDI...")
+  (midi/close-midi-sequencer! audio-context)
   (midi/close-midi-synth! audio-context))
 
 (defn tear-down!
@@ -95,7 +96,6 @@
 
    Playback may not necessarily be resumed after doing this."
   ([{:keys [audio-context] :as score}]
-   (-> @audio-context :midi-sequencer .close)
    ;; Do any necessary clean-up for each audio type.
    ;; e.g. for MIDI, close the MidiSynthesizer.
    (tear-down! score (determine-audio-types score)))
@@ -121,12 +121,12 @@
 (defmethod stop-playback-for-audio-type! :midi
   [{:keys [audio-context] :as score} _]
   (log/debug "Stopping MIDI playback...")
+  (midi/close-midi-sequencer! audio-context)
   (midi/all-sound-off! audio-context))
 
 (defn stop-playback!
   "Stop playback, but leave the score in a state where playback can be resumed."
   ([{:keys [audio-context] :as score}]
-   (-> @audio-context :midi-sequencer .close)
    (stop-playback! score (determine-audio-types score)))
   ([{:keys [audio-context] :as score} audio-type]
    (if (coll? audio-type)
@@ -328,7 +328,7 @@
                         (shift-events start' end))]
     (log/debug "Scheduling events...")
     (midi/play-sequence!
-      (-> score :audio-context deref :midi-sequencer)
+      (:audio-context score)
       (score-to-sequence events score)
       #(deliver wait :done))
     (cond

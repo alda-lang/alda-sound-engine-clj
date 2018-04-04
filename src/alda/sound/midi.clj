@@ -3,7 +3,7 @@
   (:import (java.util.concurrent LinkedBlockingQueue)
            (javax.sound.midi MidiSystem Synthesizer
                              MidiChannel ShortMessage
-                             MetaEventListener)))
+                             MetaEventListener Sequencer)))
 
 (comment
   "There are 16 channels per MIDI synth (1-16);
@@ -149,6 +149,18 @@ If receiver is provided, audio-ctx is not used at all."
   [audio-ctx]
   (.close ^Synthesizer (:midi-synth @audio-ctx)))
 
+(defn get-midi-sequencer!
+  "If there isn't already a :midi-sequencer in the audio context, creates
+  a MIDI sequencer and adds it."
+  [audio-ctx]
+  (when-not (:midi-sequencer @audio-ctx)
+    (swap! audio-ctx assoc :midi-sequencer (new-midi-sequencer))))
+
+(defn close-midi-sequencer!
+  "Closes the MIDI sequencer in the audio context."
+  [audio-ctx]
+  (.close ^Sequencer (:midi-sequencer @audio-ctx)))
+
 (defn protection-key-for
   [{:keys [instrument offset duration midi-note] :as note}
    {:keys [midi-channels] :as audio-ctx}]
@@ -223,26 +235,27 @@ If receiver is provided, audio-ctx is not used at all."
   "Plays a sequence on a java midi sequencer.
 
   Execute callback when sequence is done."
-  [sequencer sequence promise!]
-  (if (not (.isOpen sequencer))
-    (do
-      (.open sequencer)
-      ;; Set the sequencer to use our midi synth
-      (.setReceiver (.getTransmitter sequencer)
-        (.getReceiver *midi-synth*))
-      ;; handle end of track
-      (.addMetaEventListener sequencer
-        (proxy
-          [javax.sound.midi.MetaEventListener] []
-          (meta [event]
-            (when (= (.getType event) MIDI-END-OF-TRACK)
-              (.close sequencer)
-              (promise!)))))
-      ;; Play the sequencer
-      (doto sequencer
-        (.setSequence sequence)
-        .start))
-    (do
-      ;; Clear our play status
-      (promise!)
-      (log/debug "Attempted to play on an open sequencer!"))))
+  [audio-ctx sequence promise!]
+  (let [{:keys [midi-synth midi-sequencer]} @audio-ctx]
+    (if (not (.isOpen midi-sequencer))
+      (do
+        (.open midi-sequencer)
+        ;; Set the sequencer to use our midi synth
+        (.setReceiver (.getTransmitter midi-sequencer)
+          (.getReceiver midi-synth))
+        ;; handle end of track
+        (.addMetaEventListener midi-sequencer
+          (proxy
+            [javax.sound.midi.MetaEventListener] []
+            (meta [event]
+              (when (= (.getType event) MIDI-END-OF-TRACK)
+                (.close midi-sequencer)
+                (promise!)))))
+        ;; Play the sequencer
+        (doto midi-sequencer
+          (.setSequence sequence)
+          .start))
+      (do
+        ;; Clear our play status
+        (promise!)
+        (log/debug "Attempted to play on an open sequencer!")))))
