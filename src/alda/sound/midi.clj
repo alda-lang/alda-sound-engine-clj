@@ -128,12 +128,13 @@ If receiver is provided, audio-ctx is not used at all."
   [audio-ctx score & [receiver]]
   (log/debug "Loading MIDI instruments into channels...")
   (let [midi-channels (ids->channels score)]
+    (when (not receiver)
+      (swap! audio-ctx assoc :midi-channels midi-channels))
     (doseq [{:keys [channel patch]} (set (vals midi-channels))
             :when patch]
       (if receiver
         (load-instrument-receiver! patch channel receiver)
-        (do (swap! audio-ctx assoc :midi-channels midi-channels)
-            (let [synth (:midi-synth @audio-ctx)
+        (do (let [synth (:midi-synth @audio-ctx)
                   channels (.getChannels ^Synthesizer synth)]
               (load-instrument! patch (aget channels channel))))))))
 
