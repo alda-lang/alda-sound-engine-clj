@@ -284,10 +284,26 @@
     (doto sequencer
       .stopRecording
       .close)
-    ;; Write out!
-    ;; TODO make this into a proper command
-    ;; (MidiSystem/write seq 0 (new File "test.mid"))
     seq))
+
+(defn create-sequence!
+  [score & [event-set]]
+  (let [score       (update score :audio-context #(or % (new-audio-context)))
+        _           (log/debug "Setting up audio types...")
+        _           (set-up! score)
+        _           (refresh! score)
+        _           (log/debug "Determining events to schedule...")
+        [start end] (start-finish-times *play-opts* (:markers score))
+        start'      (if event-set
+                      (earliest-offset event-set)
+                      start)
+        events      (-> (or event-set (:events score))
+                        (shift-events start' end))]
+    (score-to-sequence events score)))
+
+(defn export-midi!
+  [sequence filename]
+  (MidiSystem/write sequence 0 (File. filename)))
 
 (defn play!
   "Plays an Alda score, optionally from given start/end marks determined by
@@ -310,27 +326,15 @@
      :wait     A function that will sleep for the duration of the score. This is
                useful if you want to playback asynchronously, perform some
                actions, then wait until playback is complete before proceeding."
-  [score & [event-set]]
+  [score & args]
   (let [{:keys [one-off? async?]} *play-opts*
         _           (log/debug "Determining audio types...")
         score       (update score :audio-context #(or % (new-audio-context)))
-        _           (log/debug "Setting up audio types...")
-        _           (set-up! score)
-        _           (refresh! score)
+        sequence    (apply create-sequence! score args)
         playing?    (atom true)
-        wait        (promise)
-        _           (log/debug "Determining events to schedule...")
-        [start end] (start-finish-times *play-opts* (:markers score))
-        start'      (if event-set
-                      (earliest-offset event-set)
-                      start)
-        events      (-> (or event-set (:events score))
-                        (shift-events start' end))]
+        wait        (promise)]
     (log/debug "Scheduling events...")
-    (midi/play-sequence!
-      (:audio-context score)
-      (score-to-sequence events score)
-      #(deliver wait :done))
+    (midi/play-sequence! (:audio-context score) sequence #(deliver wait :done))
     (cond
       (and one-off? async?)       (future @wait (tear-down! score))
       (and one-off? (not async?)) (do @wait (tear-down! score))
