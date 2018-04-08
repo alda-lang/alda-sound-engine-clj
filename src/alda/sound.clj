@@ -345,7 +345,6 @@
         _           (log/debug "Determining audio types...")
         score       (update score :audio-context #(or % (new-audio-context)))
         sequence    (apply create-sequence! score args)
-        playing?    (atom true)
         wait        (promise)]
     (log/debug "Scheduling events...")
     (midi/play-sequence! (:audio-context score) sequence #(deliver wait :done))
@@ -354,9 +353,7 @@
       (and one-off? (not async?)) (do @wait (tear-down! score))
       (not async?)                @wait)
     {:score score
-     :stop! #(do
-               (reset! playing? false)
-               (if one-off?
-                 (tear-down! score)
-                 (stop-playback! score)))
+     :stop! #(if one-off?
+               (tear-down! score)
+               (stop-playback! score))
      :wait  #(deref wait)}))
