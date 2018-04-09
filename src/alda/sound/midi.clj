@@ -24,6 +24,7 @@
    synth instance and use it to play one score at a time.")
 
 (def ^:dynamic *midi-synth* nil)
+(def ^:dynamic *midi-sequencer* nil)
 
 (def ^:const MIDI-END-OF-TRACK 0x2F)
 
@@ -32,29 +33,37 @@
   (alter-var-root #'*midi-synth* (constantly (new-midi-synth))))
 
 (comment
-  "It takes a second for a MIDI synth instance to initialize. This is fine for
+  "It takes a second for a MIDI synth/sequencer instance to initialize. This is fine for
    worker processes because each worker only needs to do it once, when the
    process starts. Multiple scores can be played simultaneously by using
    multiple worker processes.
 
-   When we only have a single process and we need multiple MIDI synth
+   When we only have a single process and we need multiple MIDI synth/sequencer
    instances and we need to start them on demand, to avoid hiccups and make
    playback more immediate, we can maintain a handful of pre-initialized MIDI
    synths, ready for immediate use.")
 
 (def ^:dynamic *midi-synth-pool* (LinkedBlockingQueue.))
-
 (def ^:const MIDI-SYNTH-POOL-SIZE 4)
 
-(defn fill-midi-synth-pool!
-  []
-  (dotimes [_ (- MIDI-SYNTH-POOL-SIZE (count *midi-synth-pool*))]
-    (future (.add *midi-synth-pool* (new-midi-synth)))))
+(def ^:dynamic *midi-sequencer-pool* (LinkedBlockingQueue.))
+(def ^:const MIDI-SEQUENCER-POOL-SIZE 4)
 
-(defn drain-excess-midi-synths!
-  []
-  (dotimes [_ (- (count *midi-synth-pool*) MIDI-SYNTH-POOL-SIZE)]
-    (future (.close (.take *midi-synth-pool*)))))
+(defn fill-pool!
+  [pool size init-fn]
+  (dotimes [_ (- size (count pool))]
+    (future (.add pool (init-fn)))))
+
+(def fill-midi-synth-pool! #(fill-pool! *midi-synth-pool* MIDI-SYNTH-POOL-SIZE new-midi-synth))
+(def fill-midi-sequencer-pool! #(fill-pool! *midi-sequencer-pool* MIDI-SEQUENCER-POOL-SIZE new-midi-sequencer))
+
+(defn drain-pool-excess!
+  [pool size]
+  (dotimes [_ (- (count pool) size)]
+    (future (.close (.take pool)))))
+
+(def drain-excess-midi-synths! #(drain-pool-excess! *midi-synth-pool* MIDI-SYNTH-POOL-SIZE))
+(def drain-excess-midi-sequencers! #(drain-pool-excess! *midi-sequencer-pool* MIDI-SEQUENCER-POOL-SIZE))
 
 (defn midi-synth-available?
   []
@@ -77,6 +86,19 @@
       (log/debugf "Taking a MIDI synth from the pool (available: %d)"
                   (count *midi-synth-pool*))
       (.take *midi-synth-pool*))))
+
+(defn get-midi-sequencer
+  []
+  (if *midi-sequencer*
+    (do
+      (log/debug "Using the global *midi-sequencer*")
+      *midi-sequencer*)
+    (do
+      (fill-midi-sequencer-pool!)
+      (drain-excess-midi-sequencers!)
+      (log/debugf "Taking a MIDI sequencer from the pool (available: %d)"
+                  (count *midi-sequencer-pool*))
+      (.take *midi-sequencer-pool*))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -155,7 +177,7 @@ If receiver is provided, audio-ctx is not used at all."
   a MIDI sequencer and adds it."
   [audio-ctx]
   (when-not (:midi-sequencer @audio-ctx)
-    (swap! audio-ctx assoc :midi-sequencer (new-midi-sequencer))))
+    (swap! audio-ctx assoc :midi-sequencer (get-midi-sequencer))))
 
 (defn close-midi-sequencer!
   "Closes the MIDI sequencer in the audio context."
