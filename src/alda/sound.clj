@@ -244,9 +244,7 @@
 (defn score-to-sequence
   [events score]
   (let [{:keys [instruments audio-context]} score
-        {:keys [midi-synth midi-channels]} @audio-context
-        channels  (.getChannels ^Synthesizer midi-synth)
-
+        {:keys [midi-channels]} @audio-context
         ;; TODO make resolution configurable
         seq (new Sequence Sequence/PPQ Sequence/SMPTE_24)
         sequencer (doto (MidiSystem/getSequencer false) .open)
