@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## 0.4.0 (2018-06-22)
+
+* Removed stale references to scheduled functions, [for compatibility with
+  alda/core 0.4.0](https://github.com/alda-lang/alda-core/pull/65).
+
 ## 0.3.2 (2018-02-03)
 
 * Fixed a bug where `:from` playback option was being ignored when an
