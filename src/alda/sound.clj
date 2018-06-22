@@ -75,8 +75,8 @@
    done every time `play!` is called because new instruments may have been
    added to the score between calls to `play!`, when using Alda live.)"
   ([score]
-    (pdoseq-block [audio-type (determine-audio-types score)]
-      (refresh! score audio-type)))
+   (pdoseq-block [audio-type (determine-audio-types score)]
+     (refresh! score audio-type)))
   ([score audio-type]
    (if (coll? audio-type)
      (pdoseq-block [a-t audio-type]
@@ -266,17 +266,13 @@
     (pdoseq-block [{:keys [offset instrument duration] :as event} events]
       (let [inst   (-> instrument instruments)
             start! #(when @playing?
-                      (if-let [f (:function event)]
-                        (future (f))
-                        (start-event! audio-context event inst)))
-            stop!  #(when-not (:function event)
-                      (stop-event! audio-context event inst))]
+                      (start-event! audio-context event inst))
+            stop!  #(stop-event! audio-context event inst)]
         (schedule-event! engine (+ begin
                                    (/ offset 1000.0)) start!)
-        (when-not (:function event)
-          (schedule-event! engine (+ begin
-                                     (/ offset 1000.0)
-                                     (/ duration 1000.0)) stop!))))
+        (schedule-event! engine (+ begin
+                                   (/ offset 1000.0)
+                                   (/ duration 1000.0)) stop!)))
     (schedule-event! engine (+ begin
                                (/ (score-length events) 1000.0)
                                1) end!)))
