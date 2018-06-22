@@ -67,8 +67,8 @@
    done every time `play!` is called because new instruments may have been
    added to the score between calls to `play!`, when using Alda live.)"
   ([score]
-    (pdoseq-block [audio-type (determine-audio-types score)]
-      (refresh! score audio-type)))
+   (pdoseq-block [audio-type (determine-audio-types score)]
+     (refresh! score audio-type)))
   ([score audio-type]
    (if (coll? audio-type)
      (pdoseq-block [a-t audio-type]
@@ -260,18 +260,16 @@
     (midi/load-instruments! nil score receiver)
     (doseq [{:keys [offset instrument duration midi-note volume] :as event} events]
       (let
-          [volume (* 127 volume)
+          [volume         (* 127 volume)
            channel-number (-> instrument midi-channels :channel)
-
-           playMessage (doto (new ShortMessage)
-                         (.setMessage ShortMessage/NOTE_ON channel-number midi-note
-                                      volume))
-           stopMessage (when-not (:function event)
-                         (doto (new ShortMessage)
-                           (.setMessage ShortMessage/NOTE_OFF channel-number midi-note
-                                        volume)))
-           offset (* offset 1000)
-           duration (* duration 1000)]
+           playMessage    (doto (new ShortMessage)
+                            (.setMessage ShortMessage/NOTE_ON channel-number midi-note
+                                         volume))
+           stopMessage    (doto (new ShortMessage)
+                            (.setMessage ShortMessage/NOTE_OFF channel-number midi-note
+                                         volume))
+           offset         (* offset 1000)
+           duration       (* duration 1000)]
         (.send receiver playMessage offset)
         (when stopMessage
           (.send receiver stopMessage (+ offset duration)))))
