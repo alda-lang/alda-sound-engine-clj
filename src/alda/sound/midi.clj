@@ -1,9 +1,9 @@
 (ns alda.sound.midi
   (:require [taoensso.timbre :as log])
-  (:import (java.util.concurrent LinkedBlockingQueue)
-           (javax.sound.midi MidiSystem Synthesizer
-                             MidiChannel ShortMessage
-                             MetaEventListener Sequencer)))
+  (:import (java.io File)
+           (java.util.concurrent LinkedBlockingQueue)
+           (javax.sound.midi MetaEventListener MidiChannel MidiEvent MidiSystem
+                             ShortMessage Sequencer Sequence Synthesizer)))
 
 (comment
   "There are 16 channels per MIDI synth (1-16);
@@ -17,7 +17,7 @@
 
 (defn new-midi-sequencer
   []
-  (MidiSystem/getSequencer false))
+  (doto (MidiSystem/getSequencer false) .open))
 
 (comment
   "When using separate worker processes, each process can have a single MIDI
@@ -31,6 +31,10 @@
 (defn open-midi-synth!
   []
   (alter-var-root #'*midi-synth* (constantly (new-midi-synth))))
+
+(defn open-midi-sequencer!
+  []
+  (alter-var-root #'*midi-sequencer* (constantly (new-midi-sequencer))))
 
 (comment
   "It takes a second for a MIDI synth/sequencer instance to initialize. This is fine for
@@ -79,7 +83,7 @@
   (if *midi-synth*
     (do
       (log/debug "Using the global *midi-synth*")
-      (doto *midi-synth* .open))
+      *midi-synth*)
     (do
       (fill-midi-synth-pool!)
       (drain-excess-midi-synths!)
@@ -134,31 +138,21 @@
                   :when (= :midi (:type config))]
               id))))
 
-(defn- load-instrument! [patch-number ^MidiChannel channel]
-  (.programChange channel (dec patch-number)))
-
-(defn- load-instrument-receiver! [patch-number ^Integer channel-number receiver]
-  (let [instrumentMessage (doto (new ShortMessage)
-                            (.setMessage ShortMessage/PROGRAM_CHANGE
-                                         channel-number (dec patch-number) 0))]
-    (.send receiver instrumentMessage 0)))
-
 (defn load-instruments!
-  "Load instruments into audio-ctx's synth, or receiver instead if provided.
-
-If receiver is provided, audio-ctx is not used at all."
-  [audio-ctx score & [receiver]]
+  "Sends program change messages via audio-ctx's receiver."
+  [audio-ctx score]
   (log/debug "Loading MIDI instruments into channels...")
-  (let [midi-channels (ids->channels score)]
-    (when (not receiver)
-      (swap! audio-ctx assoc :midi-channels midi-channels))
+  (let [midi-channels (ids->channels score)
+        receiver      (:midi-receiver @audio-ctx)]
+    (swap! audio-ctx assoc :midi-channels midi-channels)
     (doseq [{:keys [channel patch]} (set (vals midi-channels))
-            :when patch]
-      (if receiver
-        (load-instrument-receiver! patch channel receiver)
-        (do (let [synth (:midi-synth @audio-ctx)
-                  channels (.getChannels ^Synthesizer synth)]
-              (load-instrument! patch (aget channels channel))))))))
+            :when patch
+            :let [message (doto (ShortMessage.)
+                            (.setMessage ShortMessage/PROGRAM_CHANGE
+                                         channel
+                                         (dec patch)
+                                         0))]]
+      (.send receiver message 0))))
 
 (defn get-midi-synth!
   "If there isn't already a :midi-synth in the audio context, finds an
@@ -174,111 +168,103 @@ If receiver is provided, audio-ctx is not used at all."
 
 (defn get-midi-sequencer!
   "If there isn't already a :midi-sequencer in the audio context, creates
-  a MIDI sequencer and adds it."
+   a MIDI sequencer and adds it.
+
+   Also adds a :midi-receiver for the sequencer to the audio context, and hooks
+   up its transmitter to the receiver so that events sent to the receiver will
+   be transmitted to the synthesizer.
+
+   IMPORTANT: `get-midi-synth!` must be called on the context before
+   `get-midi-sequencer!`, because `get-midi-sequencer!` also needs to hook up
+   the sequencer's transmitter to the synthesizer's receiver."
   [audio-ctx]
-  (when-not (:midi-sequencer @audio-ctx)
-    (swap! audio-ctx assoc :midi-sequencer (get-midi-sequencer))))
+  (let [{:keys [midi-synth midi-sequencer]} @audio-ctx]
+    (when-not midi-synth
+      (throw
+        (ex-info
+          (str "A MIDI synthesizer is required in the audio context before a "
+               "MIDI sequencer can be added.")
+          {})))
+    (when-not midi-sequencer
+      (let [sequencer      (get-midi-sequencer)
+            synth-receiver (.getReceiver midi-synth)]
+        ;; Set the sequencer to use our midi synth
+        (-> sequencer .getTransmitter (.setReceiver synth-receiver))
+        ;; Expose the sequencer and receiver in the audio context.
+        (swap! audio-ctx assoc :midi-sequencer sequencer
+                               :midi-receiver  synth-receiver)))))
 
 (defn close-midi-sequencer!
   "Closes the MIDI sequencer in the audio context."
   [audio-ctx]
   (.close ^Sequencer (:midi-sequencer @audio-ctx)))
 
-(defn protection-key-for
-  [{:keys [instrument offset duration midi-note] :as note}
-   {:keys [midi-channels] :as audio-ctx}]
-  (let [midi-channel (-> instrument midi-channels :channel)]
-    [midi-channel midi-note (+ offset duration)]))
+(defn- ms->ticks
+  "(Sequence. SMPTE_24 1) means 24 frames per second, 1 tick per frame. So, 24
+   ticks per second.
 
-(defn protect-note!
-  "Makes a note in the audio context that this note is playing.
+   MIDI sequence offset is expressed in ticks, so we can use this formula to
+   convert note offsets (in ms) to ticks."
+  [ms]
+  (-> ms (/ 1000.0) (* 24.0)))
 
-   This prevents other notes that have the same MIDI note number from stopping
-   this note."
-  [audio-ctx note]
-  (let [[midi-channel midi-note offset] (protection-key-for note @audio-ctx)]
-    (swap! audio-ctx
-           update-in [:protected-notes midi-channel midi-note]
-           (fnil conj #{}) offset)))
+(defn load-sequencer!
+  [events score]
+  (let [{:keys [instruments audio-context]} score
+        {:keys [midi-sequencer midi-channels]} @audio-context
+        sqnc  (Sequence. Sequence/SMPTE_24 1)
+        track (.createTrack sqnc)]
+    ;; Load the sequence into the sequencer.
+    (doto midi-sequencer
+      (.setSequence sqnc)
+      (.setTickPosition 0))
 
-(defn unprotect-note!
-  "Removes protection from this note so that it can be stopped."
-  [audio-ctx note]
-  (let [[midi-channel midi-note offset] (protection-key-for note @audio-ctx)]
-    (swap! audio-ctx
-           update-in [:protected-notes midi-channel midi-note]
-           disj offset)))
-
-(defn note-reserved?
-  "Returns true if there is ANOTHER note with the same MIDI note number that is
-   currently playing. If this is the case, then we will NOT stop the note, and
-   instead wait for the other note to stop it."
-  [audio-ctx note]
-  (let [{:keys [protected-notes]}       @audio-ctx
-        [midi-channel midi-note offset] (protection-key-for note @audio-ctx)]
-    (boolean (some (partial not= offset)
-                   (get-in protected-notes [midi-channel midi-note])))))
-
-(defn play-note!
-  [audio-ctx {:keys [midi-note instrument volume track-volume panning]
-              :as note}]
-  (protect-note! audio-ctx note)
-  (let [{:keys [midi-synth midi-channels]} @audio-ctx
-        channels       (.getChannels ^Synthesizer midi-synth)
-        channel-number (-> instrument midi-channels :channel)
-        channel        (aget channels channel-number)]
-    (.controlChange ^MidiChannel channel 7 (* 127 track-volume))
-    (.controlChange ^MidiChannel channel 10 (* 127 panning))
-    (log/debugf "Playing note %s on channel %s." midi-note channel-number)
-    (.noteOn ^MidiChannel channel midi-note (* 127 volume))))
-
-(defn stop-note!
-  [audio-ctx {:keys [midi-note instrument] :as note}]
-  (unprotect-note! audio-ctx note)
-  (when-not (note-reserved? audio-ctx note)
-    (let [{:keys [midi-synth midi-channels]} @audio-ctx
-          channels       (.getChannels ^Synthesizer midi-synth)
-          channel-number (-> instrument midi-channels :channel)
-          channel        (aget channels channel-number)]
-      (log/debug "MIDI note off:" midi-note)
-      (.noteOff ^MidiChannel channel midi-note))))
+    ;; Add events to the sequence's track.
+    (load-instruments! audio-context score)
+    (doseq [{:keys [offset instrument duration midi-note volume] :as event}
+            events]
+      (let [volume         (* 127 volume)
+            channel-number (-> instrument midi-channels :channel)
+            play-message   (doto (ShortMessage.)
+                             (.setMessage ShortMessage/NOTE_ON
+                                          channel-number
+                                          midi-note
+                                          volume))
+            stop-message   (doto (ShortMessage.)
+                             (.setMessage ShortMessage/NOTE_OFF
+                                          channel-number
+                                          midi-note
+                                          volume))]
+        (.add track (MidiEvent. play-message (ms->ticks offset)))
+        (.add track (MidiEvent. stop-message (ms->ticks (+ offset
+                                                           duration))))))))
 
 (defn all-sound-off!
   [audio-ctx]
-  (letfn [(stop-channel! [^MidiChannel channel]
-            (.allNotesOff channel)
-            (.allSoundOff channel))]
-    (->> @audio-ctx
-      :midi-synth
-      .getChannels
-      (pmap stop-channel!)
-      doall)))
+  (let [stop-channel! (fn [^MidiChannel channel]
+                        (.allNotesOff channel)
+                        (.allSoundOff channel))
+        {:keys [midi-synth midi-sequencer]} @audio-ctx]
+    (.stop ^Sequencer midi-sequencer)
+    (->> midi-synth .getChannels (pmap stop-channel!) doall)))
 
 (defn play-sequence!
-  "Plays a sequence on a java midi sequencer.
+  "Plays the sequence currently loaded into the MIDI sequencer.
 
-  Execute callback when sequence is done."
-  [audio-ctx sequence promise!]
-  (let [{:keys [midi-synth midi-sequencer]} @audio-ctx]
-    (if (not (.isOpen midi-sequencer))
-      (do
-        (.open midi-sequencer)
-        ;; Set the sequencer to use our midi synth
-        (.setReceiver (.getTransmitter midi-sequencer)
-          (.getReceiver midi-synth))
-        ;; handle end of track
-        (.addMetaEventListener midi-sequencer
-          (proxy
-            [javax.sound.midi.MetaEventListener] []
-            (meta [event]
-              (when (= (.getType event) MIDI-END-OF-TRACK)
-                (.close midi-sequencer)
-                (promise!)))))
-        ;; Play the sequencer
-        (doto midi-sequencer
-          (.setSequence sequence)
-          .start))
-      (do
-        ;; Clear our play status
-        (promise!)
-        (log/debug "Attempted to play on an open sequencer!")))))
+   Calls `done-fn` when the sequence is done playing."
+  [audio-ctx done-fn]
+  (let [{:keys [midi-sequencer]} @audio-ctx]
+    (doto midi-sequencer
+      (.addMetaEventListener
+        (proxy [MetaEventListener] []
+          (meta [event]
+            (when (= (.getType event) MIDI-END-OF-TRACK)
+              (log/debug "Handling MIDI-END-OF-TRACK metamessage.")
+              (done-fn)))))
+      (.setTickPosition 0)
+      .start)))
+
+(defn export-midi-file!
+  [sqnc filename]
+  (MidiSystem/write sqnc 0 (File. filename)))
+

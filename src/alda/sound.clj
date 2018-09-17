@@ -3,11 +3,7 @@
             [alda.util       :refer (parse-time
                                      pdoseq-block
                                      parse-position)]
-            [taoensso.timbre :as    log])
-  (:import [javax.sound.midi
-            Sequence MidiSystem MidiDevice
-            ShortMessage Synthesizer MetaMessage]
-           [java.io File]))
+            [taoensso.timbre :as    log]))
 
 (defn new-audio-context
   []
@@ -121,7 +117,6 @@
 (defmethod stop-playback-for-audio-type! :midi
   [{:keys [audio-context] :as score} _]
   (log/debug "Stopping MIDI playback...")
-  (midi/close-midi-sequencer! audio-context)
   (midi/all-sound-off! audio-context))
 
 (defn stop-playback!
@@ -134,48 +129,6 @@
        (stop-playback! score a-t))
      (when (set-up? score audio-type)
        (stop-playback-for-audio-type! score audio-type)))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defmulti start-event!
-  "Kicks off a note/event, using the appropriate method based on the type of the
-   instrument."
-  (fn [audio-ctx event instrument]
-    (-> instrument :config :type)))
-
-(defmethod start-event! :default
-  [_ _ instrument]
-  (log/errorf "No implementation of start-event! defined for type %s"
-              (-> instrument :config :type)))
-
-(defmethod start-event! nil
-  [_ _ _]
-  :do-nothing)
-
-(defmethod start-event! :midi
-  [audio-ctx note _]
-  (midi/play-note! audio-ctx note))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defmulti stop-event!
-  "Ends a note/event, using the appropriate method based on the type of the
-   instrument."
-  (fn [audio-ctx event instrument]
-    (-> instrument :config :type)))
-
-(defmethod stop-event! :default
-  [_ _ instrument]
-  (log/errorf "No implementation of start-event! defined for type %s"
-              (-> instrument :config :type)))
-
-(defmethod stop-event! nil
-  [_ _ _]
-  :do-nothing)
-
-(defmethod stop-event! :midi
-  [audio-ctx note _]
-  (midi/stop-note! audio-ctx note))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -241,50 +194,6 @@
                    events)
          (sort-by :offset))))
 
-(defn score-to-sequence
-  [events score]
-  (let [{:keys [instruments audio-context]} score
-        {:keys [midi-channels]} @audio-context
-        ;; TODO make resolution configurable
-        seq (new Sequence Sequence/PPQ Sequence/SMPTE_24)
-        sequencer (doto (MidiSystem/getSequencer false) .open)
-        receiver (.getReceiver sequencer)
-        currentTrack (.createTrack seq)]
-    ;; warm up the recorder
-    (doto sequencer
-      (.setSequence seq)
-      (.setTickPosition 0)
-      (.recordEnable currentTrack -1)
-      (.startRecording))
-    ;; Pipe events into recorder
-    (midi/load-instruments! nil score receiver)
-    (doseq [{:keys [offset instrument duration midi-note volume] :as event} events]
-      (let
-          [volume         (* 127 volume)
-           channel-number (-> instrument midi-channels :channel)
-           playMessage    (doto (new ShortMessage)
-                            (.setMessage ShortMessage/NOTE_ON channel-number midi-note
-                                         volume))
-           stopMessage    (doto (new ShortMessage)
-                            (.setMessage ShortMessage/NOTE_OFF channel-number midi-note
-                                         volume))
-           offset         (* offset 1000)
-           duration       (* duration 1000)]
-        (.send receiver playMessage offset)
-        (when stopMessage
-          (.send receiver stopMessage (+ offset duration)))))
-
-    ;; auto-add a end of track metamessage
-    (.send receiver
-           (doto (new MetaMessage)
-             (.setMessage midi/MIDI-END-OF-TRACK nil 0)) -1)
-
-    ;; Stop our recorder
-    (doto sequencer
-      .stopRecording
-      .close)
-    seq))
-
 (defn create-sequence!
   [score & [event-set]]
   (let [score       (update score :audio-context #(or % (new-audio-context)))
@@ -309,11 +218,7 @@
                       start)
         events      (-> (or event-set (:events score))
                         (shift-events start' end))]
-    (score-to-sequence events score)))
-
-(defn export-midi!
-  [sequence filename]
-  (MidiSystem/write sequence 0 (File. filename)))
+    (midi/load-sequencer! events score)))
 
 (defn play!
   "Plays an Alda score, optionally from given start/end marks determined by
@@ -338,12 +243,14 @@
                actions, then wait until playback is complete before proceeding."
   [score & args]
   (let [{:keys [one-off? async?]} *play-opts*
-        _           (log/debug "Determining audio types...")
-        score       (update score :audio-context #(or % (new-audio-context)))
-        sequence    (apply create-sequence! score args)
-        wait        (promise)]
-    (log/debug "Scheduling events...")
-    (midi/play-sequence! (:audio-context score) sequence #(deliver wait :done))
+        _     (log/debug "Determining audio types...")
+        score (update score :audio-context #(or % (new-audio-context)))
+        _     (log/debug "Creating sequence...")
+        wait  (promise)]
+    (log/debug "Creating sequence...")
+    (apply create-sequence! score args)
+    (log/debug "Playing sequence...")
+    (midi/play-sequence! (:audio-context score) #(deliver wait :done))
     (cond
       (and one-off? async?)       (future @wait (tear-down! score))
       (and one-off? (not async?)) (do @wait (tear-down! score))
