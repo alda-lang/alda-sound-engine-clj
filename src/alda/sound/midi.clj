@@ -26,7 +26,14 @@
 (def ^:dynamic *midi-synth* nil)
 (def ^:dynamic *midi-sequencer* nil)
 
+;; ref: https://www.csie.ntu.edu.tw/~r92092/ref/midi/
+;; also various sources of Java MIDI example programs that use this value to
+;; create an "end of track" message
 (def ^:const MIDI-END-OF-TRACK 0x2F)
+
+;; ref: https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
+(def ^:const MIDI-CHANNEL-VOLUME 7)
+(def ^:const MIDI-PANNING        10)
 
 (defn open-midi-synth!
   []
@@ -221,23 +228,36 @@
 
     ;; Add events to the sequence's track.
     (load-instruments! audio-context score)
-    (doseq [{:keys [offset instrument duration midi-note volume] :as event}
+    (doseq [{:keys [offset instrument duration midi-note volume track-volume
+                    panning]
+             :as event}
             events]
-      (let [volume         (* 127 volume)
-            channel-number (-> instrument midi-channels :channel)
-            play-message   (doto (ShortMessage.)
-                             (.setMessage ShortMessage/NOTE_ON
-                                          channel-number
-                                          midi-note
-                                          volume))
-            stop-message   (doto (ShortMessage.)
-                             (.setMessage ShortMessage/NOTE_OFF
-                                          channel-number
-                                          midi-note
-                                          volume))]
-        (.add track (MidiEvent. play-message (ms->ticks offset)))
-        (.add track (MidiEvent. stop-message (ms->ticks (+ offset
-                                                           duration))))))))
+      (let [volume               (* 127 volume)
+            channel-number       (-> instrument midi-channels :channel)
+            track-volume-message (doto (ShortMessage.)
+                                   (.setMessage ShortMessage/CONTROL_CHANGE
+                                                channel-number
+                                                MIDI-CHANNEL-VOLUME
+                                                (* 127 track-volume)))
+            panning-message      (doto (ShortMessage.)
+                                   (.setMessage ShortMessage/CONTROL_CHANGE
+                                                channel-number
+                                                MIDI-PANNING
+                                                (* 127 panning)))
+            note-on-message      (doto (ShortMessage.)
+                                   (.setMessage ShortMessage/NOTE_ON
+                                                channel-number
+                                                midi-note
+                                                volume))
+            note-off-message     (doto (ShortMessage.)
+                                   (.setMessage ShortMessage/NOTE_OFF
+                                                channel-number
+                                                midi-note
+                                                volume))]
+        (doseq [message [track-volume-message panning-message note-on-message]]
+          (.add track (MidiEvent. message (ms->ticks offset))))
+        (.add track (MidiEvent. note-off-message
+                                (ms->ticks (+ offset duration))))))))
 
 (defn all-sound-off!
   [audio-ctx]
