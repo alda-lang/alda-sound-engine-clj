@@ -207,19 +207,19 @@
   (.close ^Sequencer (:midi-sequencer @audio-ctx)))
 
 (defn- ms->ticks
-  "(Sequence. SMPTE_24 1) means 24 frames per second, 1 tick per frame. So, 24
+  "(Sequence. SMPTE_24 2) means 24 frames per second, 2 ticks per frame. So, 48
    ticks per second.
 
    MIDI sequence offset is expressed in ticks, so we can use this formula to
    convert note offsets (in ms) to ticks."
   [ms]
-  (-> ms (/ 1000.0) (* 24.0)))
+  (-> ms (/ 1000.0) (* 48.0)))
 
 (defn load-sequencer!
   [events score]
   (let [{:keys [instruments audio-context]} score
         {:keys [midi-sequencer midi-channels]} @audio-context
-        sqnc  (Sequence. Sequence/SMPTE_24 1)
+        sqnc  (Sequence. Sequence/SMPTE_24 2)
         track (.createTrack sqnc)]
     ;; Load the sequence into the sequencer.
     (doto midi-sequencer
