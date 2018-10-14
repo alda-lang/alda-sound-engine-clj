@@ -2,7 +2,7 @@
   :source-paths   #{"src" "test"}
   :dependencies   '[; dev
                     [adzerk/bootlaces            "0.1.13" :scope "test"]
-                    [alda/core                   "0.2.2"  :scope "test"]
+                    [alda/core                   "LATEST" :scope "test"]
                     [org.clojure/tools.namespace "0.2.11" :scope "test"]
 
                     ; dependencies
