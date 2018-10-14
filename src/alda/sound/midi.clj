@@ -145,21 +145,17 @@
                   :when (= :midi (:type config))]
               id))))
 
-(defn load-instruments!
-  "Sends program change messages via audio-ctx's receiver."
+(defn map-instruments-to-channels!
+  "Sets aside one MIDI channel per instrument in the score.
+
+   Stores the result (a map of instrument IDs to channel numbers) in the audio
+   context as :midi-channels.
+
+   Also returns the result."
   [audio-ctx score]
-  (log/debug "Loading MIDI instruments into channels...")
-  (let [midi-channels (ids->channels score)
-        receiver      (:midi-receiver @audio-ctx)]
+  (let [midi-channels (ids->channels score)]
     (swap! audio-ctx assoc :midi-channels midi-channels)
-    (doseq [{:keys [channel patch]} (set (vals midi-channels))
-            :when patch
-            :let [message (doto (ShortMessage.)
-                            (.setMessage ShortMessage/PROGRAM_CHANGE
-                                         channel
-                                         (dec patch)
-                                         0))]]
-      (.send receiver message 0))))
+    midi-channels))
 
 (defn get-midi-synth!
   "If there isn't already a :midi-synth in the audio context, finds an
@@ -177,10 +173,6 @@
   "If there isn't already a :midi-sequencer in the audio context, creates
    a MIDI sequencer and adds it.
 
-   Also adds a :midi-receiver for the sequencer to the audio context, and hooks
-   up its transmitter to the receiver so that events sent to the receiver will
-   be transmitted to the synthesizer.
-
    IMPORTANT: `get-midi-synth!` must be called on the context before
    `get-midi-sequencer!`, because `get-midi-sequencer!` also needs to hook up
    the sequencer's transmitter to the synthesizer's receiver."
@@ -193,13 +185,19 @@
                "MIDI sequencer can be added.")
           {})))
     (when-not midi-sequencer
-      (let [sequencer      (get-midi-sequencer)
-            synth-receiver (.getReceiver midi-synth)]
-        ;; Set the sequencer to use our midi synth
-        (-> sequencer .getTransmitter (.setReceiver synth-receiver))
-        ;; Expose the sequencer and receiver in the audio context.
-        (swap! audio-ctx assoc :midi-sequencer sequencer
-                               :midi-receiver  synth-receiver)))))
+      (let [sequencer (get-midi-sequencer)]
+        ;; Kill any existing connections, e.g. when re-using the global
+        ;; sequencer and synth.
+        (doseq [device [sequencer midi-synth]]
+          (doseq [transmitter (.getTransmitters device)]
+            (.close transmitter))
+          (doseq [receiver (.getReceivers device)]
+            (.close receiver)))
+        ;; Set the sequencer up to transmit messages to the synthesizer.
+        (-> sequencer
+            .getTransmitter
+            (.setReceiver (.getReceiver midi-synth)))
+        (swap! audio-ctx assoc :midi-sequencer sequencer)))))
 
 (defn close-midi-sequencer!
   "Closes the MIDI sequencer in the audio context."
@@ -218,7 +216,7 @@
 (defn load-sequencer!
   [events score]
   (let [{:keys [instruments audio-context]} score
-        {:keys [midi-sequencer midi-channels]} @audio-context
+        {:keys [midi-sequencer]} @audio-context
         sqnc  (Sequence. Sequence/SMPTE_24 2)
         track (.createTrack sqnc)]
     ;; Load the sequence into the sequencer.
@@ -226,34 +224,46 @@
       (.setSequence sqnc)
       (.setTickPosition 0))
 
+    ;; For each instrument in the score, add an initial event that sets the
+    ;; channel to the right instrument patch.
+    (let [midi-channels (map-instruments-to-channels! audio-context score)]
+      (doseq [{:keys [channel patch]} (set (vals midi-channels))
+              :when patch
+              :let [message (doto (ShortMessage.)
+                              (.setMessage ShortMessage/PROGRAM_CHANGE
+                                           channel
+                                           (dec patch)
+                                           0))]]
+        (.add track (MidiEvent. message 0))))
+
     ;; Add events to the sequence's track.
-    (load-instruments! audio-context score)
     (doseq [{:keys [offset instrument duration midi-note volume track-volume
                     panning]
              :as event}
             events]
-      (let [volume               (* 127 volume)
-            channel-number       (-> instrument midi-channels :channel)
-            track-volume-message (doto (ShortMessage.)
-                                   (.setMessage ShortMessage/CONTROL_CHANGE
-                                                channel-number
-                                                MIDI-CHANNEL-VOLUME
-                                                (* 127 track-volume)))
-            panning-message      (doto (ShortMessage.)
-                                   (.setMessage ShortMessage/CONTROL_CHANGE
-                                                channel-number
-                                                MIDI-PANNING
-                                                (* 127 panning)))
-            note-on-message      (doto (ShortMessage.)
-                                   (.setMessage ShortMessage/NOTE_ON
-                                                channel-number
-                                                midi-note
-                                                volume))
-            note-off-message     (doto (ShortMessage.)
-                                   (.setMessage ShortMessage/NOTE_OFF
-                                                channel-number
-                                                midi-note
-                                                volume))]
+      (let [{:keys [midi-channels]} @audio-context
+            volume                  (* 127 volume)
+            channel-number          (-> instrument midi-channels :channel)
+            track-volume-message    (doto (ShortMessage.)
+                                      (.setMessage ShortMessage/CONTROL_CHANGE
+                                                   channel-number
+                                                   MIDI-CHANNEL-VOLUME
+                                                   (* 127 track-volume)))
+            panning-message         (doto (ShortMessage.)
+                                      (.setMessage ShortMessage/CONTROL_CHANGE
+                                                   channel-number
+                                                   MIDI-PANNING
+                                                   (* 127 panning)))
+            note-on-message         (doto (ShortMessage.)
+                                      (.setMessage ShortMessage/NOTE_ON
+                                                   channel-number
+                                                   midi-note
+                                                   volume))
+            note-off-message        (doto (ShortMessage.)
+                                      (.setMessage ShortMessage/NOTE_OFF
+                                                   channel-number
+                                                   midi-note
+                                                   volume))]
         (doseq [message [track-volume-message panning-message note-on-message]]
           (.add track (MidiEvent. message (ms->ticks offset))))
         (.add track (MidiEvent. note-off-message

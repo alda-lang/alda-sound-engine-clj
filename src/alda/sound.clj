@@ -45,35 +45,6 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defmulti refresh-audio-type!
-  (fn [score audio-type] audio-type))
-
-(defmethod refresh-audio-type! :default
-  [score audio-type]
-  (log/errorf "No implementation of refresh-audio-type! defined for type %s"
-              audio-type))
-
-(defmethod refresh-audio-type! :midi
-  [{:keys [audio-context] :as score} _]
-  (midi/load-instruments! audio-context score))
-
-(defn refresh!
-  "Performs any actions that may be needed each time the `play!` function is
-   called. e.g. for MIDI, load instruments into channels (this needs to be
-   done every time `play!` is called because new instruments may have been
-   added to the score between calls to `play!`, when using Alda live.)"
-  ([score]
-   (pdoseq-block [audio-type (determine-audio-types score)]
-     (refresh! score audio-type)))
-  ([score audio-type]
-   (if (coll? audio-type)
-     (pdoseq-block [a-t audio-type]
-       (refresh! score a-t))
-     (when (set-up? score audio-type)
-       (refresh-audio-type! score audio-type)))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
 (defmulti tear-down-audio-type!
   (fn [score audio-type] audio-type))
 
@@ -199,7 +170,6 @@
   (let [score       (update score :audio-context #(or % (new-audio-context)))
         _           (log/debug "Setting up audio types...")
         _           (set-up! score)
-        _           (refresh! score)
         _           (log/debug "Determining events to schedule...")
         _           (log/debug (str "*play-opts*: " *play-opts*))
         [start end] (start-finish-times *play-opts* (:markers score))
