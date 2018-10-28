@@ -1,5 +1,46 @@
 # CHANGELOG
 
+## 1.0.0 (2018-10-28)
+
+* Major overhaul of the event scheduling system, which used to leverage JSyn as
+  a scheduler. We now play scores by creating Java MIDI Sequences and playing
+  them via a Sequencer and Synthesizer.
+
+* BREAKING CHANGES:
+  * Removed public vars from `alda.sound`: `*synthesis-engine*`,
+    `new-synthesis-engine`, `start-synthesis-engine!`, `refresh!`,
+    `refresh-audio-type!`, `start-event!`, `stop-event!`, `schedule-event!`,
+    `schedule-events!`
+
+  * Removed `:synthesis-engine` from the audio context.
+
+  * Removed the `start-event!` and `stop-event!` lifecycle events, as this
+    functionality is now handled by the sequencer.
+
+  * Removed the `refresh!` lifecycle event, in the interest of trying to keep
+    things idempotent. The idea is that we don't want to tolerate having to
+    "reset" an audio context between playing scores. Prior to this release, we
+    were using `refresh!` to re-load the MIDI instruments of the score into the
+    synthesizer. Now, we do this by making the program change events part of the
+    MIDI sequences we create.
+
+  * Removed public vars from `alda.sound.midi`: `load-instruments!`,
+    `protection-key-for`, `protect-note!`, `unprotect-note!`, `note-reserved?`,
+    `play-note!`, `stop-note!`
+
+  * `alda.sound.midi/load-instruments!` replaced by a more granular function
+    called `map-instruments-to-channels!`
+
+  * Real-time playback functionality in `alda.sound.midi` (`play-note!`,
+    `stop-note!`) has been removed; the sequencer handles all of that now.
+
+* Non-breaking changes:
+  * Added `:midi-sequencer` to the audio context.
+
+  * Usage of `alda.sound/schedule-events!` in `alda.sound.play!` has been
+    replaced by usage of new functions, `alda.sound/create-sequence!` and
+    `alda.sound.midi/play-sequence!`.
+
 ## 0.4.0 (2018-06-22)
 
 * Removed stale references to scheduled functions, [for compatibility with
