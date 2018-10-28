@@ -3,25 +3,12 @@
             [alda.util       :refer (parse-time
                                      pdoseq-block
                                      parse-position)]
-            [taoensso.timbre :as    log])
-  (:import [com.softsynth.shared.time TimeStamp ScheduledCommand]
-           [com.jsyn.engine SynthesisEngine]))
-
-(def ^:dynamic *synthesis-engine* nil)
-
-(defn new-synthesis-engine
-  []
-  (doto (SynthesisEngine.) .start))
-
-(defn start-synthesis-engine!
-  []
-  (alter-var-root #'*synthesis-engine* (constantly (new-synthesis-engine))))
+            [taoensso.timbre :as    log]))
 
 (defn new-audio-context
   []
   (atom
-    {:audio-types      #{}
-     :synthesis-engine (or *synthesis-engine* (new-synthesis-engine))}))
+    {:audio-types #{}}))
 
 (defn set-up?
   [{:keys [audio-context] :as score} audio-type]
@@ -38,7 +25,8 @@
 (defmethod set-up-audio-type! :midi
   [{:keys [audio-context] :as score} _]
   (log/debug "Setting up MIDI...")
-  (midi/get-midi-synth! audio-context))
+  (midi/get-midi-synth! audio-context)
+  (midi/get-midi-sequencer! audio-context))
 
 (declare determine-audio-types)
 
@@ -57,35 +45,6 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defmulti refresh-audio-type!
-  (fn [score audio-type] audio-type))
-
-(defmethod refresh-audio-type! :default
-  [score audio-type]
-  (log/errorf "No implementation of refresh-audio-type! defined for type %s"
-              audio-type))
-
-(defmethod refresh-audio-type! :midi
-  [{:keys [audio-context] :as score} _]
-  (midi/load-instruments! audio-context score))
-
-(defn refresh!
-  "Performs any actions that may be needed each time the `play!` function is
-   called. e.g. for MIDI, load instruments into channels (this needs to be
-   done every time `play!` is called because new instruments may have been
-   added to the score between calls to `play!`, when using Alda live.)"
-  ([score]
-   (pdoseq-block [audio-type (determine-audio-types score)]
-     (refresh! score audio-type)))
-  ([score audio-type]
-   (if (coll? audio-type)
-     (pdoseq-block [a-t audio-type]
-       (refresh! score a-t))
-     (when (set-up? score audio-type)
-       (refresh-audio-type! score audio-type)))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
 (defmulti tear-down-audio-type!
   (fn [score audio-type] audio-type))
 
@@ -95,7 +54,8 @@
 
 (defmethod tear-down-audio-type! :midi
   [{:keys [audio-context] :as score} _]
-  (log/debug "Closing MIDI synth...")
+  (log/debug "Closing MIDI...")
+  (midi/close-midi-sequencer! audio-context)
   (midi/close-midi-synth! audio-context))
 
 (defn tear-down!
@@ -103,9 +63,6 @@
 
    Playback may not necessarily be resumed after doing this."
   ([{:keys [audio-context] :as score}]
-   ;; Prevent any future events from being executed. This is so that playback
-   ;; will stop when we tear down the score mid-playback.
-   (.clearCommandQueue (:synthesis-engine @audio-context))
    ;; Do any necessary clean-up for each audio type.
    ;; e.g. for MIDI, close the MidiSynthesizer.
    (tear-down! score (determine-audio-types score)))
@@ -136,7 +93,6 @@
 (defn stop-playback!
   "Stop playback, but leave the score in a state where playback can be resumed."
   ([{:keys [audio-context] :as score}]
-   (.clearCommandQueue (:synthesis-engine @audio-context))
    (stop-playback! score (determine-audio-types score)))
   ([{:keys [audio-context] :as score} audio-type]
    (if (coll? audio-type)
@@ -144,48 +100,6 @@
        (stop-playback! score a-t))
      (when (set-up? score audio-type)
        (stop-playback-for-audio-type! score audio-type)))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defmulti start-event!
-  "Kicks off a note/event, using the appropriate method based on the type of the
-   instrument."
-  (fn [audio-ctx event instrument]
-    (-> instrument :config :type)))
-
-(defmethod start-event! :default
-  [_ _ instrument]
-  (log/errorf "No implementation of start-event! defined for type %s"
-              (-> instrument :config :type)))
-
-(defmethod start-event! nil
-  [_ _ _]
-  :do-nothing)
-
-(defmethod start-event! :midi
-  [audio-ctx note _]
-  (midi/play-note! audio-ctx note))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defmulti stop-event!
-  "Ends a note/event, using the appropriate method based on the type of the
-   instrument."
-  (fn [audio-ctx event instrument]
-    (-> instrument :config :type)))
-
-(defmethod stop-event! :default
-  [_ _ instrument]
-  (log/errorf "No implementation of start-event! defined for type %s"
-              (-> instrument :config :type)))
-
-(defmethod stop-event! nil
-  [_ _ _]
-  :do-nothing)
-
-(defmethod stop-event! :midi
-  [audio-ctx note _]
-  (midi/stop-note! audio-ctx note))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -251,31 +165,30 @@
                    events)
          (sort-by :offset))))
 
-(defn schedule-event!
-  [^SynthesisEngine engine offset f]
-  (let [ts  (TimeStamp. offset)
-        cmd (proxy [ScheduledCommand] [] (run [] (f)))]
-    (.scheduleCommand engine ts cmd)))
+(defn create-sequence!
+  [score & [event-set]]
+  (let [score       (update score :audio-context #(or % (new-audio-context)))
+        _           (log/debug "Setting up audio types...")
+        _           (set-up! score)
+        _           (log/debug "Determining events to schedule...")
+        _           (log/debug (str "*play-opts*: " *play-opts*))
+        [start end] (start-finish-times *play-opts* (:markers score))
+        start'      (cond
+                      ;; If a "from" offset is explicitly provided, use the
+                      ;; calculated start offset derived from it.
+                      (:from *play-opts*)
+                      start
 
-(defn schedule-events!
-  [events score playing? wait]
-  (let [{:keys [instruments audio-context]} score
-        engine (:synthesis-engine @audio-context)
-        begin  (.getCurrentTime ^SynthesisEngine engine)
-        end!   #(deliver wait :done)]
-    (pdoseq-block [{:keys [offset instrument duration] :as event} events]
-      (let [inst   (-> instrument instruments)
-            start! #(when @playing?
-                      (start-event! audio-context event inst))
-            stop!  #(stop-event! audio-context event inst)]
-        (schedule-event! engine (+ begin
-                                   (/ offset 1000.0)) start!)
-        (schedule-event! engine (+ begin
-                                   (/ offset 1000.0)
-                                   (/ duration 1000.0)) stop!)))
-    (schedule-event! engine (+ begin
-                               (/ (score-length events) 1000.0)
-                               1) end!)))
+                      ;; If an event-set is provided, use the earliest event's
+                      ;; offset.
+                      event-set
+                      (earliest-offset event-set)
+
+                      :else
+                      start)
+        events      (-> (or event-set (:events score))
+                        (shift-events start' end))]
+    (midi/load-sequencer! events score)))
 
 (defn play!
   "Plays an Alda score, optionally from given start/end marks determined by
@@ -298,44 +211,22 @@
      :wait     A function that will sleep for the duration of the score. This is
                useful if you want to playback asynchronously, perform some
                actions, then wait until playback is complete before proceeding."
-  [score & [event-set]]
+  [score & args]
   (let [{:keys [one-off? async?]} *play-opts*
-        _           (log/debug "Determining audio types...")
-        score       (update score :audio-context #(or % (new-audio-context)))
-        _           (log/debug "Setting up audio types...")
-        _           (set-up! score)
-        _           (refresh! score)
-        playing?    (atom true)
-        wait        (promise)
-        _           (log/debug "Determining events to schedule...")
-        _           (log/debug (str "*play-opts*: " *play-opts*))
-        [start end] (start-finish-times *play-opts* (:markers score))
-        start'      (cond
-                      ;; If a "from" offset is explicitly provided, use the
-                      ;; calculated start offset derived from it.
-                      (:from *play-opts*)
-                      start
-
-                      ;; If an event-set is provided, use the earliest event's
-                      ;; offset.
-                      event-set
-                      (earliest-offset event-set)
-
-                      :else
-                      start)
-        events      (-> (or event-set (:events score))
-                        (shift-events start' end))]
-    (log/debug "Scheduling events...")
-    (schedule-events! events score playing? wait)
+        _     (log/debug "Determining audio types...")
+        score (update score :audio-context #(or % (new-audio-context)))
+        _     (log/debug "Creating sequence...")
+        wait  (promise)]
+    (log/debug "Creating sequence...")
+    (apply create-sequence! score args)
+    (log/debug "Playing sequence...")
+    (midi/play-sequence! (:audio-context score) #(deliver wait :done))
     (cond
       (and one-off? async?)       (future @wait (tear-down! score))
       (and one-off? (not async?)) (do @wait (tear-down! score))
       (not async?)                @wait)
     {:score score
-     :stop! #(do
-               (reset! playing? false)
-               (if one-off?
-                 (tear-down! score)
-                 (stop-playback! score)))
+     :stop! #(if one-off?
+               (tear-down! score)
+               (stop-playback! score))
      :wait  #(deref wait)}))
-

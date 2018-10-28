@@ -1,6 +1,9 @@
 (ns alda.sound.dev
-  (:require [alda.now  :refer :all]
-            [alda.lisp :refer :all]))
+  (:require [alda.now        :refer :all]
+            [alda.lisp       :refer :all]
+            [taoensso.timbre :as    log]))
+
+(log/set-level! :debug)
 
 (comment
   (set-up! (atom (score)) :midi)
