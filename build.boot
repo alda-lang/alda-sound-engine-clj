@@ -1,5 +1,5 @@
 (set-env!
-  :source-paths   #{"src" "test"}
+  :source-paths   #{"src"}
   :dependencies   '[; dev
                     [adzerk/bootlaces            "0.1.13" :scope "test"]
                     [alda/core                   "LATEST" :scope "test"]
@@ -10,7 +10,7 @@
 
 (require '[adzerk.bootlaces :refer :all])
 
-(def ^:const +version+ "1.0.0")
+(def ^:const +version+ "1.1.0")
 
 (bootlaces! +version+)
 

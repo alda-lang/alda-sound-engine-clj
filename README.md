@@ -4,8 +4,6 @@ A Clojure implementation of an [Alda](https://github.com/alda-lang/alda) sound e
 
 The `alda.sound` namespace functions as a library focused on playing a fully realized Alda score map.
 
-The `alda.now` namespace provides convenient helper functions/macros that make it easy to use Alda within a Clojure program. For more information, see the [`alda.now` documentation](https://github.com/alda-lang/alda/blob/master/doc/alda-now.md).
-
 ## Development
 
 ### alda.sound
@@ -20,6 +18,6 @@ What happens, exactly, at the beginning and end of an event, is determined by th
 
 ## License
 
-Copyright © 2012-2018 Dave Yarwood et al
+Copyright © 2012-2019 Dave Yarwood et al
 
 Distributed under the Eclipse Public License version 1.0.

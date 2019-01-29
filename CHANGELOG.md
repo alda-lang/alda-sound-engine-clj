@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 1.1.0 (2019-01-28)
+
+* (BREAKING CHANGE) Removed the `alda.now` namespace. Alda no longer depends on
+  it internally, and it is no longer the recommended way to do live-coding in
+  Alda.
+
+  The new recommended way for Clojure programmers to live code music with Alda
+  is [alda-clj].
+
+[alda-clj]: https://github.com/daveyarwood/alda-clj
+
 ## 1.0.0 (2018-10-28)
 
 * Major overhaul of the event scheduling system, which used to leverage JSyn as
