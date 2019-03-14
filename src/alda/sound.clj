@@ -213,9 +213,7 @@
                actions, then wait until playback is complete before proceeding."
   [score & args]
   (let [{:keys [one-off? async?]} *play-opts*
-        _     (log/debug "Determining audio types...")
         score (update score :audio-context #(or % (new-audio-context)))
-        _     (log/debug "Creating sequence...")
         wait  (promise)]
     (log/debug "Creating sequence...")
     (apply create-sequence! score args)
@@ -230,3 +228,15 @@
                (tear-down! score)
                (stop-playback! score))
      :wait  #(deref wait)}))
+
+(defn export!
+  "Exports an Alda score to a MIDI file."
+  [score output-filename]
+  (let [{:keys [audio-context] :as score}
+        (update score :audio-context #(or % (new-audio-context)))]
+    (log/debug "Creating sequence...")
+    (create-sequence! score)
+    (let [sqnc (.getSequence (:midi-sequencer @audio-context))]
+      (log/debugf "Exporting score to MIDI file: %s" output-filename)
+      (midi/export-midi-file! sqnc output-filename)
+      (log/debug "Score MIDI export done."))))
