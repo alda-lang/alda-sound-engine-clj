@@ -2,8 +2,9 @@
   (:require [taoensso.timbre :as log])
   (:import (java.io File)
            (java.util.concurrent LinkedBlockingQueue)
-           (javax.sound.midi MetaEventListener MidiChannel MidiEvent MidiSystem
-                             ShortMessage Sequencer Sequence Synthesizer)))
+           (javax.sound.midi MetaEventListener MidiChannel MidiDevice MidiEvent
+                             MidiSystem ShortMessage Sequencer Sequence
+                             Synthesizer)))
 
 (comment
   "There are 16 channels per MIDI synth (1-16);
@@ -188,7 +189,7 @@
       (let [sequencer (get-midi-sequencer)]
         ;; Kill any existing connections, e.g. when re-using the global
         ;; sequencer and synth.
-        (doseq [device [sequencer midi-synth]]
+        (doseq [^MidiDevice device [sequencer midi-synth]]
           (doseq [transmitter (.getTransmitters device)]
             (.close transmitter))
           (doseq [receiver (.getReceivers device)]
@@ -196,7 +197,7 @@
         ;; Set the sequencer up to transmit messages to the synthesizer.
         (-> sequencer
             .getTransmitter
-            (.setReceiver (.getReceiver midi-synth)))
+            (.setReceiver (.getReceiver ^Synthesizer midi-synth)))
         (swap! audio-ctx assoc :midi-sequencer sequencer)))))
 
 (defn close-midi-sequencer!
