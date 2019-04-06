@@ -205,21 +205,48 @@
   [audio-ctx]
   (.close ^Sequencer (:midi-sequencer @audio-ctx)))
 
-(defn- ms->ticks
-  "(Sequence. SMPTE_24 2) means 24 frames per second, 2 ticks per frame. So, 48
-   ticks per second.
+(defn ms->ticks-fn
+  "Returns a function that will convert an offset in ms into ticks, based on the
+   history of tempo changes in the score and the desired javax.midi.Sequence
+   division type and resolution.
 
-   MIDI sequence offset is expressed in ticks, so we can use this formula to
-   convert note offsets (in ms) to ticks."
-  [ms]
-  (-> ms (/ 1000.0) (* 48.0)))
+   When the division type is SMPTE, the conversion is simple math, and we don't
+   need to consider the score at all.
+
+   When the division type is PPQ, however, the logic is more complicated because
+   the physical duration of a tick varies depending on the tempo, and this has a
+   cascading effect when it comes to scheduling an event. We must consider not
+   only the current tempo, but the entire history of tempo changes in the
+   score."
+  [score division-type resolution]
+  (fn [ms]
+    (condp contains? division-type
+      #{Sequence/SMPTE_24 Sequence/SMPTE_25 Sequence/SMPTE_30
+        Sequence/SMPTE_30DROP}
+      ;; Example: SMPTE_24 means 24 frames per second, and a resolution of 2
+      ;; means 2 ticks per frame. So, if the division type is SMPTE_24 and the
+      ;; resolution is 2, then there are 24 x 2 = 48 ticks per second.
+      (let [ticks-per-second (* division-type resolution)]
+        (-> ms (/ 1000.0) (* ticks-per-second)))
+
+      #{Sequence/PPQ}
+      (throw (ex-info "TODO: implement PPQ scheduling" {}))
+
+      ; else
+      (throw (ex-info "Unsupported division type."
+                      {:division-type division-type
+                       :resolution    resolution})))))
 
 (defn load-sequencer!
   [events score]
   (let [{:keys [instruments audio-context]} score
         {:keys [midi-sequencer]} @audio-context
-        sqnc  (Sequence. Sequence/SMPTE_24 2)
-        track (.createTrack sqnc)]
+        ;; TODO: Implement PPQ scheduling and use that instead
+        division-type Sequence/SMPTE_24
+        resolution    2
+        sqnc          (Sequence. division-type resolution)
+        track         (.createTrack sqnc)
+        ms->ticks     (ms->ticks-fn score division-type resolution)]
     ;; Load the sequence into the sequencer.
     (doto midi-sequencer
       (.setSequence sqnc)
