@@ -72,7 +72,7 @@
 (defn drain-pool-excess!
   [pool size]
   (dotimes [_ (- (count pool) size)]
-    (future (.close (.take pool)))))
+    (future (.close ^MidiDevice (.take pool)))))
 
 (def drain-excess-midi-synths! #(drain-pool-excess! *midi-synth-pool* MIDI-SYNTH-POOL-SIZE))
 (def drain-excess-midi-sequencers! #(drain-pool-excess! *midi-sequencer-pool* MIDI-SEQUENCER-POOL-SIZE))
