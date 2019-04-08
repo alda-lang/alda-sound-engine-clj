@@ -205,6 +205,54 @@
   [audio-ctx]
   (.close ^Sequencer (:midi-sequencer @audio-ctx)))
 
+(defn- most-recent-entry
+  [tempo-itinerary offset-ms]
+  (assert (seq tempo-itinerary) "Tempo itinerary is empty.")
+  (->> tempo-itinerary
+       (take-while #(<= (:ms %) offset-ms))
+       last))
+
+(defn ppq-ms->ticks
+  "Converts an offset in ms into ticks.
+
+   NB: the length of a tick varies depending on the current tempo. Therefore, an
+   offset expressed in ticks is influenced by the history of tempos up to that
+   moment in time."
+  [tempo-itinerary offset-ms resolution]
+  (if (zero? offset-ms)
+    0
+    (let [{:keys [ms tempo ticks]}
+          (most-recent-entry tempo-itinerary offset-ms)
+
+          ;; source: https://stackoverflow.com/a/2038364/2338327
+          ms-per-tick
+          (/ 60000.0 (* tempo resolution))
+
+          ms-delta
+          (- offset-ms ms)
+
+          ticks-delta
+          (/ ms-delta ms-per-tick)]
+      (+ ticks ticks-delta))))
+
+(defn tempo-itinerary
+  "Returns a sequence of maps, each of which represents a tempo value at a point
+   in time. The tempo is expressed in BPM, and the point in time is expressed
+   both in ms and in ticks."
+  [score resolution]
+  (let [tempo-values (sort (:tempo/values score))]
+    (assert (zero? (ffirst tempo-values))
+            "There must be an initial tempo value at 0 ms.")
+    (loop [itinerary [], tempo-values tempo-values]
+      (let [[[offset-ms tempo] & more] tempo-values]
+        (if offset-ms
+          (recur (conj itinerary
+                       {:ms    offset-ms
+                        :tempo tempo
+                        :ticks (ppq-ms->ticks itinerary offset-ms resolution)})
+                 more)
+          itinerary)))))
+
 (defn ms->ticks-fn
   "Returns a function that will convert an offset in ms into ticks, based on the
    history of tempo changes in the score and the desired javax.midi.Sequence
@@ -219,31 +267,37 @@
    only the current tempo, but the entire history of tempo changes in the
    score."
   [score division-type resolution]
-  (fn [ms]
-    (condp contains? division-type
-      #{Sequence/SMPTE_24 Sequence/SMPTE_25 Sequence/SMPTE_30
-        Sequence/SMPTE_30DROP}
-      ;; Example: SMPTE_24 means 24 frames per second, and a resolution of 2
-      ;; means 2 ticks per frame. So, if the division type is SMPTE_24 and the
-      ;; resolution is 2, then there are 24 x 2 = 48 ticks per second.
-      (let [ticks-per-second (* division-type resolution)]
-        (-> ms (/ 1000.0) (* ticks-per-second)))
+  (condp contains? division-type
+    #{Sequence/SMPTE_24 Sequence/SMPTE_25 Sequence/SMPTE_30
+      Sequence/SMPTE_30DROP}
+    ;; Example: SMPTE_24 means 24 frames per second, and a resolution of 2
+    ;; means 2 ticks per frame. So, if the division type is SMPTE_24 and the
+    ;; resolution is 2, then there are 24 x 2 = 48 ticks per second.
+    (let [ticks-per-second (* division-type resolution)]
+      (fn [ms]
+        (-> ms (/ 1000.0) (* ticks-per-second))))
 
-      #{Sequence/PPQ}
-      (throw (ex-info "TODO: implement PPQ scheduling" {}))
+    #{Sequence/PPQ}
+    (let [tempo-itinerary (tempo-itinerary score resolution)]
+      (fn [ms]
+        (ppq-ms->ticks tempo-itinerary ms resolution)))
 
-      ; else
-      (throw (ex-info "Unsupported division type."
-                      {:division-type division-type
-                       :resolution    resolution})))))
+    ; else
+    (throw (ex-info "Unsupported division type."
+                    {:division-type division-type
+                     :resolution    resolution}))))
 
 (defn load-sequencer!
   [events score]
   (let [{:keys [instruments audio-context]} score
         {:keys [midi-sequencer]} @audio-context
-        ;; TODO: Implement PPQ scheduling and use that instead
-        division-type Sequence/SMPTE_24
-        resolution    2
+        division-type Sequence/PPQ
+        ;; This ought to allow for notes as fast as 512th notes at a tempo of
+        ;; 120 bpm, way faster than anyone should reasonably need.
+        ;;
+        ;; (4 PPQ = 4 ticks per quarter note, i.e. 16th note resolution; so
+        ;;  128 PPQ = 512th note resolution)
+        resolution    128
         sqnc          (Sequence. division-type resolution)
         track         (.createTrack sqnc)
         ms->ticks     (ms->ticks-fn score division-type resolution)]
@@ -263,6 +317,9 @@
                                            (dec patch)
                                            0))]]
         (.add track (MidiEvent. message 0))))
+
+    ;; TODO: add tempo change events according to tempo itinerary;
+    ;; make sure they're compatible with SMPTE
 
     ;; Add events to the sequence's track.
     (doseq [{:keys [offset instrument duration midi-note volume track-volume
