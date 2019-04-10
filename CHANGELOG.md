@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 1.2.0 (2019-04-10)
+
+* `alda.sound` now has an `export!` function, which takes a score and an output
+  filename and exports the score as a MIDI file.
+
+* When a score is played or exported, the MIDI sequence division type and
+  resolution are now PPQ and 128, whereas they were SMPTE and 2 before. Using
+  PPQ allows us to export MIDI files that are much more useful when imported
+  into other music software such as sheet music editors.
+
 ## 1.1.0 (2019-01-28)
 
 * (BREAKING CHANGE) Removed the `alda.now` namespace. Alda no longer depends on
