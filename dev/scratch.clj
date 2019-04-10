@@ -58,4 +58,11 @@
   (export-examples!)
 
   (play-example! "hello_world")
-  (export-example! "hello_world"))
+  (export-example! "hello_world")
+
+  (play-example! "phase")
+  (export-example! "phase")
+
+  (-> (slurp "/tmp/charge.alda")
+      parser/parse-input
+      (sound/export! "/tmp/charge.mid")))
