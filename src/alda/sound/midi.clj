@@ -1,10 +1,12 @@
 (ns alda.sound.midi
   (:require [taoensso.timbre :as log])
   (:import (java.io File)
+           (java.nio ByteBuffer)
+           (java.util Arrays)
            (java.util.concurrent LinkedBlockingQueue)
-           (javax.sound.midi MetaEventListener MidiChannel MidiDevice MidiEvent
-                             MidiSystem ShortMessage Sequencer Sequence
-                             Synthesizer)))
+           (javax.sound.midi MetaEventListener MetaMessage MidiChannel
+                             MidiDevice MidiEvent MidiSystem ShortMessage
+                             Sequencer Sequence Synthesizer)))
 
 (comment
   "There are 16 channels per MIDI synth (1-16);
@@ -28,8 +30,10 @@
 (def ^:dynamic *midi-sequencer* nil)
 
 ;; ref: https://www.csie.ntu.edu.tw/~r92092/ref/midi/
-;; also various sources of Java MIDI example programs that use this value to
-;; create an "end of track" message
+;;
+;; There are also various sources of Java MIDI example programs that use the
+;; value 0x2F to create an "end of track" message.
+(def ^:const MIDI-SET-TEMPO 0x51)
 (def ^:const MIDI-END-OF-TRACK 0x2F)
 
 ;; ref: https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
@@ -259,14 +263,14 @@
    division type and resolution.
 
    When the division type is SMPTE, the conversion is simple math, and we don't
-   need to consider the score at all.
+   need to consider the tempo itinerary at all.
 
    When the division type is PPQ, however, the logic is more complicated because
    the physical duration of a tick varies depending on the tempo, and this has a
    cascading effect when it comes to scheduling an event. We must consider not
    only the current tempo, but the entire history of tempo changes in the
    score."
-  [score division-type resolution]
+  [tempo-itinerary division-type resolution]
   (condp contains? division-type
     #{Sequence/SMPTE_24 Sequence/SMPTE_25 Sequence/SMPTE_30
       Sequence/SMPTE_30DROP}
@@ -278,29 +282,82 @@
         (-> ms (/ 1000.0) (* ticks-per-second))))
 
     #{Sequence/PPQ}
-    (let [tempo-itinerary (tempo-itinerary score resolution)]
-      (fn [ms]
-        (ppq-ms->ticks tempo-itinerary ms resolution)))
+    (fn [ms]
+      (ppq-ms->ticks tempo-itinerary ms resolution))
 
     ; else
     (throw (ex-info "Unsupported division type."
                     {:division-type division-type
                      :resolution    resolution}))))
 
+(defn- max-byte-array-value
+  "Returns the maximum value that can be represented in `num-bytes` bytes.
+
+   (max-byte-array-value 1) ;;=> 255
+   (max-byte-array-value 2) ;;=> 65535
+   (max-byte-array-value 3) ;;=> 16777215
+   etc."
+  [num-bytes]
+  (-> 2 (Math/pow (* 8 num-bytes)) Math/round dec))
+
+(defn set-tempo-message
+  "In a \"set tempo\" metamessage, the desired tempo is expressed not in beats
+   per minute (BPM), but in microseconds per quarter note (I'll abbreviate this
+   as \"uspq\").
+
+   There are 60 million microseconds in a minute, therefore the formula to
+   convert BPM => uspq is 60,000,000 / BPM.
+
+   Example conversion: 120 BPM / 60,000,000 = 500,000 uspq.
+
+   The slower the tempo, the lower the BPM and the higher the uspq.
+
+   For some reason, the MIDI spec limits the number of bytes available to
+   express this number to a maximum of 3 bytes, even though there are extremely
+   slow tempos (<4 BPM) that, when expressed in uspq, are numbers too large to
+   fit into 3 bytes. Effectively, this means that the slowest supported tempo is
+   about 3.58 BPM. That's extremely slow, so it probably won't cause any
+   problems in practice, but this function will throw an assertion error below
+   that tempo, so it's worth mentioning.
+
+   ref:
+   https://www.recordingblogs.com/wiki/midi-set-tempo-meta-message
+   https://www.programcreek.com/java-api-examples/?api=javax.sound.midi.MetaMessage
+   https://docs.oracle.com/javase/7/docs/api/javax/sound/midi/MetaMessage.html
+   https://stackoverflow.com/a/22798636/2338327"
+  [tempo]
+  (let [uspq (quot 60000000 tempo)
+        ;; Technically, a tempo less than ~3.58 BPM translates into a number of
+        ;; microseconds per quarter note larger than 3 bytes can hold.
+        ;;
+        ;; Throwing an assertion error here because it's better than overflowing
+        ;; and secretly setting the tempo to an unexpected value.
+        _    (assert (<= uspq (max-byte-array-value 3))
+                     "MIDI does not support tempos slower than about 3.58 BPM.")
+        data (-> (ByteBuffer/allocate 4)
+                 (.putInt uspq)
+                 .array
+                 ;; Truncate the 4-byte array to 3 bytes, which is the upper
+                 ;; limit for the data payload of a "set tempo" message
+                 ;; according to the MIDI spec.
+                 (Arrays/copyOfRange 1 4))]
+    (MetaMessage. MIDI-SET-TEMPO data 3)))
+
 (defn load-sequencer!
   [events score]
   (let [{:keys [instruments audio-context]} score
         {:keys [midi-sequencer]} @audio-context
-        division-type Sequence/PPQ
+        division-type   Sequence/PPQ
         ;; This ought to allow for notes as fast as 512th notes at a tempo of
         ;; 120 bpm, way faster than anyone should reasonably need.
         ;;
         ;; (4 PPQ = 4 ticks per quarter note, i.e. 16th note resolution; so
         ;;  128 PPQ = 512th note resolution)
-        resolution    128
-        sqnc          (Sequence. division-type resolution)
-        track         (.createTrack sqnc)
-        ms->ticks     (ms->ticks-fn score division-type resolution)]
+        resolution      128
+        sqnc            (Sequence. division-type resolution)
+        track           (.createTrack sqnc)
+        tempo-itinerary (tempo-itinerary score resolution)
+        ms->ticks       (ms->ticks-fn tempo-itinerary division-type resolution)]
     ;; Load the sequence into the sequencer.
     (doto midi-sequencer
       (.setSequence sqnc)
@@ -318,8 +375,8 @@
                                            0))]]
         (.add track (MidiEvent. message 0))))
 
-    ;; TODO: add tempo change events according to tempo itinerary;
-    ;; make sure they're compatible with SMPTE
+    (doseq [{:keys [tempo ticks]} tempo-itinerary]
+      (.add track (MidiEvent. (set-tempo-message tempo) ticks)))
 
     ;; Add events to the sequence's track.
     (doseq [{:keys [offset instrument duration midi-note volume track-volume
