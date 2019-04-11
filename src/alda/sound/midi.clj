@@ -5,8 +5,9 @@
            (java.util Arrays)
            (java.util.concurrent LinkedBlockingQueue)
            (javax.sound.midi MetaEventListener MetaMessage MidiChannel
-                             MidiDevice MidiEvent MidiSystem ShortMessage
-                             Sequencer Sequence Synthesizer)))
+                             MidiDevice MidiEvent MidiSystem Receiver
+                             ShortMessage Sequencer Sequence Synthesizer
+                             Transmitter)))
 
 (comment
   "There are 16 channels per MIDI synth (1-16);
@@ -194,9 +195,9 @@
         ;; Kill any existing connections, e.g. when re-using the global
         ;; sequencer and synth.
         (doseq [^MidiDevice device [sequencer midi-synth]]
-          (doseq [transmitter (.getTransmitters device)]
+          (doseq [^Transmitter transmitter (.getTransmitters device)]
             (.close transmitter))
-          (doseq [receiver (.getReceivers device)]
+          (doseq [^Receiver receiver (.getReceivers device)]
             (.close receiver)))
         ;; Set the sequencer up to transmit messages to the synthesizer.
         (-> sequencer

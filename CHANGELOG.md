@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## 1.2.2 (2019-04-10)
+
+* Fixed a JDK 9+ illegal access warning that happens when calling
+  `get-midi-sequencer!`.
+
 ## 1.2.1 (2019-04-10)
 
 * Fixed a JDK 9+ illegal access warning that happens when calling
