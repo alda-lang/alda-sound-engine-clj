@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## 1.2.1 (2019-04-10)
+
+* Fixed a JDK 9+ illegal access warning that happens when calling
+  `all-sound-off!`.
+
 ## 1.2.0 (2019-04-10)
 
 * `alda.sound` now has an `export!` function, which takes a score and an output

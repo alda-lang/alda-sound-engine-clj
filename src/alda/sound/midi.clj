@@ -416,8 +416,8 @@
   (let [stop-channel! (fn [^MidiChannel channel]
                         (.allNotesOff channel)
                         (.allSoundOff channel))
-        {:keys [midi-synth midi-sequencer]} @audio-ctx]
-    (.stop ^Sequencer midi-sequencer)
+        {:keys [^Synthesizer midi-synth ^Sequencer midi-sequencer]} @audio-ctx]
+    (.stop midi-sequencer)
     (->> midi-synth .getChannels (pmap stop-channel!) doall)))
 
 (defn play-sequence!
