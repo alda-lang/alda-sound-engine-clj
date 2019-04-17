@@ -356,7 +356,9 @@
         ;;  128 PPQ = 512th note resolution)
         resolution      128
         sqnc            (Sequence. division-type resolution)
-        track           (.createTrack sqnc)
+        midi-channels   (map-instruments-to-channels! audio-context score)
+        tracks          (zipmap (keys midi-channels)
+                                (repeatedly #(.createTrack sqnc)))
         tempo-itinerary (tempo-itinerary score resolution)
         ms->ticks       (ms->ticks-fn tempo-itinerary division-type resolution)]
     ;; Load the sequence into the sequencer.
@@ -366,17 +368,18 @@
 
     ;; For each instrument in the score, add an initial event that sets the
     ;; channel to the right instrument patch.
-    (let [midi-channels (map-instruments-to-channels! audio-context score)]
-      (doseq [{:keys [channel patch]} (set (vals midi-channels))
-              :when patch
-              :let [message (doto (ShortMessage.)
-                              (.setMessage ShortMessage/PROGRAM_CHANGE
-                                           channel
-                                           (dec patch)
-                                           0))]]
-        (.add track (MidiEvent. message 0))))
+    (doseq [{:keys [channel patch]} (set (vals midi-channels))
+            track                   (vals tracks)
+            :when patch
+            :let [message (doto (ShortMessage.)
+                            (.setMessage ShortMessage/PROGRAM_CHANGE
+                                         channel
+                                         (dec patch)
+                                         0))]]
+      (.add track (MidiEvent. message 0)))
 
-    (doseq [{:keys [tempo ticks]} tempo-itinerary]
+    (doseq [{:keys [tempo ticks]} tempo-itinerary
+            track                 (vals tracks)]
       (.add track (MidiEvent. (set-tempo-message tempo) ticks)))
 
     ;; Add events to the sequence's track.
@@ -387,6 +390,7 @@
       (let [{:keys [midi-channels]} @audio-context
             volume                  (* 127 volume)
             channel-number          (-> instrument midi-channels :channel)
+            track                   (get tracks instrument)
             track-volume-message    (doto (ShortMessage.)
                                       (.setMessage ShortMessage/CONTROL_CHANGE
                                                    channel-number
@@ -439,5 +443,5 @@
 
 (defn export-midi-file!
   [sqnc filename]
-  (MidiSystem/write sqnc 0 (File. filename)))
+  (MidiSystem/write sqnc 1 (File. filename)))
 
