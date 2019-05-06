@@ -346,7 +346,7 @@
 
 (defn load-sequencer!
   [events score]
-  (let [{:keys [instruments audio-context]} score
+  (let [{:keys [audio-context]} score
         {:keys [midi-sequencer]} @audio-context
         division-type   Sequence/PPQ
         ;; This ought to allow for notes as fast as 512th notes at a tempo of
