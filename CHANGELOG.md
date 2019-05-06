@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 1.2.3 (2019-05-05)
+
+* Fixed a bug where attempting to play an empty score (e.g. `c d e`, which
+  results in an empty score because there are no instruments) results in a
+  NullPointerException.
+
+  The problem was that there were no instruments, so the MIDI system wasn't
+  being set up. However, we expect the MIDI system to be set up even if there
+  are no instruments and no notes to play, because we use the MIDI Sequencer to
+  schedule notes.
+
 ## 1.2.2 (2019-04-10)
 
 * Fixed a JDK 9+ illegal access warning that happens when calling
