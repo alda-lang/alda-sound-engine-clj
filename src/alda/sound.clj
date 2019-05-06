@@ -115,8 +115,11 @@
 
 (defn determine-audio-types
   [{:keys [instruments] :as score}]
-  (set (for [[id {:keys [config]}] instruments]
-         (:type config))))
+  ;; NB: We always need to set up the MIDI system because note scheduling relies
+  ;; on the MIDI Sequencer.
+  (into #{:midi}
+    (for [[id {:keys [config]}] instruments]
+      (:type config))))
 
 (def ^:dynamic *play-opts* {})
 
