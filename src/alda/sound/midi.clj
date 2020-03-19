@@ -38,8 +38,11 @@
 (def ^:const MIDI-END-OF-TRACK 0x2F)
 
 ;; ref: https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
-(def ^:const MIDI-CHANNEL-VOLUME 7)
-(def ^:const MIDI-PANNING        10)
+(def ^:const MIDI-PANNING    10)
+;; "Expression" is basically volume. We used to use Channel Volume (7) instead,
+;; but Expression (11) is more appropriate to use in a MIDI sequence.
+;; ref: https://github.com/alda-lang/alda-core/issues/75
+(def ^:const MIDI-EXPRESSION 11)
 
 (defn open-midi-synth!
   []
@@ -390,7 +393,7 @@
             track-volume-message    (doto (ShortMessage.)
                                       (.setMessage ShortMessage/CONTROL_CHANGE
                                                    channel-number
-                                                   MIDI-CHANNEL-VOLUME
+                                                   MIDI-EXPRESSION
                                                    (* 127 track-volume)))
             panning-message         (doto (ShortMessage.)
                                       (.setMessage ShortMessage/CONTROL_CHANGE
