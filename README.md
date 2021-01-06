@@ -1,12 +1,12 @@
 # alda-sound-engine-clj
 
+> **NOTE:** This was a component of Alda 1.x. It is no longer in use.
+
 A Clojure implementation of an [Alda](https://github.com/alda-lang/alda) sound
 engine.
 
 The `alda.sound` namespace functions as a library focused on playing a fully
 realized Alda score map.
-
-> **NOTE:** This was a component of Alda 1.x. It is no longer in use.
 
 ## Development
 
