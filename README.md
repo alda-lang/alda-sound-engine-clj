@@ -6,6 +6,8 @@ engine.
 The `alda.sound` namespace functions as a library focused on playing a fully
 realized Alda score map.
 
+> **NOTE:** This was a component of Alda 1.x. It is no longer in use.
+
 ## Development
 
 ### alda.sound
